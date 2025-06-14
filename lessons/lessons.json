@@ -1,123 +1,142 @@
 [
     {
+        "id": "intro_to_python_hello_world",
         "title": "Introduction to Python: Hello World!",
-        "filename": "lesson_1.md",
-        "exercise_checks": [
+        "content_file": "lessons/lessons_generated/intro_to_python_hello_world.md",
+        "exercises": [
             {
-                "prompt": "Write a Python program that prints \"Hello, World!\" to the console.",
+                "prompt": "Modify the 'Hello, World!' program to print your name instead of 'Hello, World!'.",
                 "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    local_output = []\n    try:\n        exec_globals = {'__builtins__': {'print': lambda *args, **kwargs: local_output.append(' '.join(map(str, args)))}} \n        exec(user_code, exec_globals)\n        output_string = ''.join(local_output)\n        if \"Hello, World!\" in output_string:\n            print('Test passed: Output contains \"Hello, World!\".')\n            return True\n        else:\n            print(f'Test failed: Expected \"Hello, World!\", got {output_string}')\n            return False\n    except Exception as e:\n        print(f'Code execution error: {e}')\n        return False",
-                "expected_output": "Hello, World!"
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if user_output == expected_output:\n            return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': f'Incorrect output. Expected: \"{expected_output}\", Got: \"{user_output}\"'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Error: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": "My Name"
             },
             {
-                "prompt": "Create a program that assigns the string \"Hello, World!\" to a variable named `greeting` and then prints the value of that variable.",
+                "prompt": "Write a Python program that prints two lines: 'Hello' on the first line and 'World' on the second line.",
                 "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    local_output = []\n    try:\n        exec_globals = {\"__builtins__\": {\"print\": lambda *args, **kwargs: local_output.append(' '.join(map(str, args)))}, \"greeting\": \"\"}\n        exec(user_code, exec_globals)\n        output_string = ''.join(local_output)\n        if \"Hello, World!\" in output_string and exec_globals[\"greeting\"] == \"Hello, World!\":\n            print('Test passed: Output contains \"Hello, World!\" and variable greeting is correctly assigned.')\n            return True\n        else:\n            print(f'Test failed: Expected \"Hello, World!\" and correctly assigned variable, got {output_string}, greeting = {exec_globals[\"greeting\"]}')\n            return False\n    except Exception as e:\n        print(f'Code execution error: {e}')\n        return False",
-                "expected_output": "Hello, World!"
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if user_output == expected_output:\n            return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': f'Incorrect output. Expected:\\n{expected_output}\\nGot:\\n{user_output}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Error: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": "Hello\nWorld"
             }
-        ]
+        ],
+        "solution_criteria": "My Name"
     },
     {
+        "id": "variables_data_types",
         "title": "Variables and Data Types",
-        "filename": "lesson_2.md",
-        "exercise_checks": [
+        "content_file": "lessons/lessons_generated/variables_data_types.md",
+        "exercises": [
             {
-                "prompt": "Create variables to store your name, age, and height. Print these values to the console.",
+                "prompt": "Write a Python program that declares three variables: one integer, one float, and one string. Print the values of these variables.",
                 "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    local_output = []\n    try:\n        exec_globals = {\"__builtins__\": {\"print\": lambda *args, **kwargs: local_output.append(' '.join(map(str, args)))}, \"input\": lambda *args: ''}\n        exec(user_code, exec_globals)\n        output_str = ''.join(local_output)\n        if output_str == expected_output:\n            print('Test passed!')\n            return True\n        else:\n            print(f'Test failed. Expected: \\n{expected_output}\\nGot: \\n{output_str}')\n            return False\n    except Exception as e:\n        print(f'Code execution error: {e}')\n        return False",
-                "expected_output": "Your Name Here Your Age Here Your Height Here"
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'integer_var' in user_exec_globals and 'float_var' in user_exec_globals and 'string_var' in user_exec_globals:\n            if isinstance(user_exec_globals['integer_var'], int) and isinstance(user_exec_globals['float_var'], float) and isinstance(user_exec_globals['string_var'], str):\n                return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n            else: \n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect data types'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Variables not defined correctly.'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
             },
             {
-                "prompt": "Convert the string \"25\" to an integer and add it to the integer 10. Print the result.",
+                "prompt": "Create a program that calculates the area of a rectangle. The length and width should be stored in variables and the area should be printed. Handle potential errors such as non-numeric inputs.",
                 "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    local_output = []\n    try:\n        exec_globals = {\"__builtins__\": {\"print\": lambda *args, **kwargs: local_output.append(' '.join(map(str, args)))}, \"input\": lambda *args: ''}\n        exec(user_code, exec_globals)\n        output_str = ''.join(local_output)\n        if output_str == expected_output:\n            print('Test passed!')\n            return True\n        else:\n            print(f'Test failed. Expected: \\n{expected_output}\\nGot: \\n{output_str}')\n            return False\n    except Exception as e:\n        print(f'Code execution error: {e}')\n        return False",
-                "expected_output": "35"
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'area' in user_exec_globals:\n            if isinstance(user_exec_globals['area'], (int, float)):\n                if user_exec_globals['area'] == 20.0:\n                    return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n                else:\n                    return {'passed': False, 'score': 0.5, 'message': 'Incorrect area calculation.'}\n            else:\n                return {'passed': False, 'score': 0.2, 'message': 'Area is not a number.'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Area variable not found.'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
             }
-        ]
+        ],
+        "solution_criteria": ""
     },
     {
+        "id": "control_structures",
         "title": "Control Structures: If Statements and Loops",
-        "filename": "lesson_3.md",
-        "exercise_checks": [
+        "content_file": "lessons/lessons_generated/control_structures.md",
+        "exercises": [
             {
-                "prompt": "Write a Python program that takes an integer as input from the user and prints whether it is even or odd.",
-                "initial_code": "number = int(input())\n\n# Your code here",
-                "check_function": "def check_result(user_code, expected_output):\n    local_output = []\n    try:\n        exec_globals = {\"__builtins__\": {\"print\": lambda *args, **kwargs: local_output.append(' '.join(map(str, args))), \"input\": lambda: \"10\"}}\n        exec(user_code, exec_globals)\n        if \"Even\" in ''.join(local_output):\n            print('Test passed: Correctly identified even number.')\n            return True\n        else:\n            print(f'Test failed: Expected \"Even\", got {''.join(local_output)}')\n            return False\n    except Exception as e:\n        print(f'Code execution error: {e}')\n        return False",
-                "expected_output": "Even"
+                "prompt": "Write a Python function called `even_odd` that takes an integer as input and prints \"Even\" if the number is even and \"Odd\" otherwise.",
+                "initial_code": "def even_odd(number):\n    pass",
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'even_odd' in user_exec_globals and callable(user_exec_globals['even_odd']):\n            if user_exec_globals['even_odd'](10) == \"Even\" and user_exec_globals['even_odd'](7) == \"Odd\":\n                return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n            else:\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect output for even or odd numbers.'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Function `even_odd` not found or not callable.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
             },
             {
-                "prompt": "Write a program that calculates the sum of all even numbers from 1 to 100 (inclusive) using a `for` loop.",
-                "initial_code": "total = 0\n#Your code here\nprint(total)",
-                "check_function": "def check_result(user_code, expected_output):\n    local_output = []\n    try:\n        exec_globals = {\"__builtins__\": {\"print\": lambda *args, **kwargs: local_output.append(' '.join(map(str, args)))}}\n        exec(user_code, exec_globals)\n        if \"2550\" in ''.join(local_output):\n            print('Test passed: Correct sum calculated.')\n            return True\n        else:\n            print(f'Test failed: Expected 2550, got {''.join(local_output)}')\n            return False\n    except Exception as e:\n        print(f'Code execution error: {e}')\n        return False",
-                "expected_output": "2550"
+                "prompt": "Write a Python function called `sum_squares` that takes an integer `n` as input and returns the sum of the squares of all numbers from 1 to n (inclusive).  Handle potential errors gracefully (e.g., non-integer input). Print an appropriate error message to the console if the input is not an integer.",
+                "initial_code": "def sum_squares(n):\n    pass",
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'sum_squares' in user_exec_globals and callable(user_exec_globals['sum_squares']):\n            if user_exec_globals['sum_squares'](5) == 55:\n                if \"Invalid input\" in user_output and user_exec_globals['sum_squares'](\"abc\") == 0:\n                    return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n                else:\n                    return {'passed': False, 'score': 0.8, 'message': 'Error handling failed'}\n            else:\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect sum of squares.'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Function `sum_squares` not found or not callable.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": "Invalid input"
             }
-        ]
+        ],
+        "solution_criteria": ""
     },
     {
+        "id": "functions_and_modules",
         "title": "Functions and Modules",
-        "filename": "lesson_4.md",
-        "exercise_checks": [
+        "content_file": "lessons/lessons_generated/functions_and_modules.md",
+        "exercises": [
             {
-                "prompt": "Write a function that calculates the area of a rectangle given its length and width.",
-                "initial_code": "def rectangle_area(length, width):\n    pass",
-                "check_function": "def check_result(user_code, expected_output):\n    local_output = []\n    try:\n        exec_globals = {\n            '__builtins__': {\n                'print': lambda *args, **kwargs: local_output.append(' '.join(map(str, args)))\n            }\n        }\n        exec(user_code, exec_globals)\n        result = float(local_output[0])\n        if abs(result - expected_output) < 0.001:\n            print('Test passed!')\n            return True\n        else:\n            print(f'Test failed: Expected {expected_output}, got {result}')\n            return False\n    except (IndexError, ValueError, NameError, TypeError) as e:\n        print(f'Code execution or assertion error: {e}')\n        return False\n    except Exception as e:\n        print(f'An unexpected error occurred: {e}')\n        return False",
-                "expected_output": "20.0"
+                "prompt": "Write a Python function called `calculate_average` that takes a list of numbers as input and returns their average. Handle the case where the input list is empty to avoid ZeroDivisionError.",
+                "initial_code": "def calculate_average(numbers):\n    pass",
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'calculate_average' in user_exec_globals and callable(user_exec_globals['calculate_average']):\n            result1 = user_exec_globals['calculate_average']([10, 20, 30])\n            result2 = user_exec_globals['calculate_average']([])\n            if result1 == 20.0 and result2 == 0.0:\n                return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n            else:\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect average calculation.'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Function `calculate_average` not found or not callable.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
             },
             {
-                "prompt": "Write a function that converts Celsius to Fahrenheit.  Use the formula: F = (9/5)C + 32. Import the `math` module (although it's not strictly needed for this exercise).",
-                "initial_code": "import math\ndef celsius_to_fahrenheit(celsius):\n    pass",
-                "check_function": "def check_result(user_code, expected_output):\n    local_output = []\n    try:\n        exec_globals = {\n            '__builtins__': {\n                'print': lambda *args, **kwargs: local_output.append(' '.join(map(str, args)))\n            },\n            'math': __import__('math')\n        }\n        exec(user_code, exec_globals)\n        result = float(local_output[0])\n        if abs(result - expected_output) < 0.001:\n            print('Test passed!')\n            return True\n        else:\n            print(f'Test failed: Expected {expected_output}, got {result}')\n            return False\n    except (IndexError, ValueError, NameError, TypeError) as e:\n        print(f'Code execution or assertion error: {e}')\n        return False\n    except Exception as e:\n        print(f'An unexpected error occurred: {e}')\n        return False",
-                "expected_output": "68.0"
+                "prompt": "Write a Python function called `divide` that takes two numbers as input and returns their quotient.  If the second number is zero, print an error message to the console and return None. Use the `math` module to perform the division.",
+                "initial_code": "import math\ndef divide(x, y):\n    pass",
+                "check_function": "import io, sys, math\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__, 'math': math}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'divide' in user_exec_globals and callable(user_exec_globals['divide']):\n            result_normal = user_exec_globals['divide'](10, 2)\n            if result_normal != 5.0:\n                return {'passed': False, 'score': 0.5, 'message': 'Test failed: Incorrect division result for 10/2.'}\n            temp_output_capture = io.StringIO()\n            sys.stdout = temp_output_capture\n            user_exec_globals['divide'](10, 0)\n            sys.stdout = original_stdout\n            zero_div_output = temp_output_capture.getvalue().strip()\n            if expected_output and expected_output in zero_div_output:\n                return {'passed': True, 'score': 1.0, 'message': 'All tests passed!'}\n            else:\n                return {'passed': False, 'score': 0.8, 'message': f'ZeroDivisionError handling failed. Expected \"{expected_output}\", got \"{zero_div_output}\".'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Function `divide` not found or not callable in user code.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": "Error: Cannot divide by zero."
             }
-        ]
+        ],
+        "solution_criteria": ""
     },
     {
+        "id": "data_structures",
         "title": "Data Structures: Lists, Tuples, and Dictionaries",
-        "filename": "lessons/lesson5.md",
-        "exercise_checks": [
+        "content_file": "lessons/lessons_generated/data_structures.md",
+        "exercises": [
             {
-                "prompt": "Create a list `fruits` with 'apple', 'banana', 'cherry'. Print the list.",
-                "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    import io, sys\n    old_stdout = sys.stdout\n    redirected_output = io.StringIO()\n    sys.stdout = redirected_output\n    try:\n        exec(user_code, globals())\n        output = redirected_output.getvalue().strip()\n        sys.stdout = old_stdout\n        if output == \"['apple', 'banana', 'cherry']\":\n            return True\n        else:\n            return False\n    except Exception:\n        sys.stdout = old_stdout\n        return False\n"
+                "prompt": "Write a Python function named `process_data` that takes a list of numbers as input and returns a tuple containing the sum and the average of the numbers.  Handle the case where the input list is empty to avoid ZeroDivisionError.",
+                "initial_code": "def process_data(numbers):\n    pass",
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'process_data' in user_exec_globals and callable(user_exec_globals['process_data']):\n            result = user_exec_globals['process_data']([1, 2, 3, 4, 5])\n            if result == (15, 3.0):\n                result_empty = user_exec_globals['process_data']([])\n                if result_empty == (0, 0.0):\n                    return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n                else:\n                    return {'passed': False, 'score': 0.5, 'message': 'Test failed: Incorrect result for empty list.'}\n            else:\n                return {'passed': False, 'score': 0.5, 'message': 'Test failed: Incorrect result for [1, 2, 3, 4, 5].'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Function `process_data` not found or not callable in user code.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
             },
             {
-                "prompt": "Create a dictionary `person` with keys 'name' (value 'Alice') and 'age' (value 25). Print the dictionary.",
-                "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    import io, sys\n    old_stdout = sys.stdout\n    redirected_output = io.StringIO()\n    sys.stdout = redirected_output\n    try:\n        exec(user_code, globals())\n        output = redirected_output.getvalue().strip()\n        sys.stdout = old_stdout\n        if output == \"{'name': 'Alice', 'age': 25}\" or output == \"{'age': 25, 'name': 'Alice'}\":\n            return True\n        else:\n            return False\n    except Exception:\n        sys.stdout = old_stdout\n        return False\n"
+                "prompt": "Create a Python function called `create_inventory` that takes a list of items (strings) and their quantities (integers) and returns a dictionary where the item names are keys and the quantities are values.  If an item appears multiple times, sum its quantities.",
+                "initial_code": "def create_inventory(items, quantities):\n    pass",
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'create_inventory' in user_exec_globals and callable(user_exec_globals['create_inventory']):\n            items = ['apple', 'banana', 'apple', 'orange']\n            quantities = [2, 3, 1, 4]\n            inventory = user_exec_globals['create_inventory'](items, quantities)\n            if inventory == {'apple': 3, 'banana': 3, 'orange': 4}:\n                return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n            else:\n                return {'passed': False, 'score': 0.5, 'message': 'Test failed: Incorrect inventory.'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Function `create_inventory` not found or not callable in user code.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
             }
-        ]
+        ],
+        "solution_criteria": ""
     },
     {
+        "id": "file_handling",
         "title": "File Handling in Python",
-        "filename": "lessons/lesson6.md",
-        "exercise_checks": [
+        "content_file": "lessons/lessons_generated/file_handling.md",
+        "exercises": [
             {
-                "prompt": "Write the text 'My first file line!' to a file named `test_file.txt`. Then read and print its content.",
-                "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    import io, sys, os\n    old_stdout = sys.stdout\n    redirected_output = io.StringIO()\n    sys.stdout = redirected_output\n    try:\n        if os.path.exists('test_file.txt'):\n            os.remove('test_file.txt')\n\n        exec(user_code, globals())\n\n        file_content_correct = False\n        if os.path.exists('test_file.txt'):\n            with open('test_file.txt', 'r') as f:\n                file_content = f.read().strip()\n            if file_content == 'My first file line!':\n                file_content_correct = True\n        \n        output = redirected_output.getvalue().strip()\n        sys.stdout = old_stdout\n\n        if file_content_correct and output == 'My first file line!':\n            return True\n        else:\n            return False\n\n    except Exception:\n        sys.stdout = old_stdout\n        return False\n    finally:\n        if os.path.exists('test_file.txt'):\n            os.remove('test_file.txt')\n"
+                "prompt": "Write a Python function that reads a file, counts the number of lines, and returns the count.  Handle the case where the file does not exist.",
+                "initial_code": "def count_lines(filepath):\n    pass",
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {\"__builtins__\": __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'count_lines' in user_exec_globals and callable(user_exec_globals['count_lines']):\n            # Test with existing file\n            with open('test_file.txt', 'w') as f: f.write('line1\\nline2\\nline3')\n            line_count = user_exec_globals['count_lines']('test_file.txt')\n            if line_count != 3:\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect line count for existing file.'}\n            # Test with non-existing file\n            non_existent_file_output = user_exec_globals['count_lines']('non_existent.txt')\n            if non_existent_file_output != 0:\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect handling of non-existent file.'}\n            return {'passed': True, 'score': 1.0, 'message': 'All tests passed!'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Function `count_lines` not found or not callable.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
+            },
+            {
+                "prompt": "Create a Python function that takes a filename and a string as input. The function should append the string to the end of the file. If the file does not exist, it should create the file and write the string into it. Handle potential exceptions appropriately.",
+                "initial_code": "def append_to_file(filename, text):\n    pass",
+                "check_function": "import io, sys, os\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {\"__builtins__\": __builtins__, \"os\": os}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'append_to_file' in user_exec_globals and callable(user_exec_globals['append_to_file']):\n            filename = 'test_append.txt'\n            user_exec_globals['append_to_file'](filename, 'Hello')\n            with open(filename, 'r') as f: content = f.read()\n            if content != 'Hello':\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect output for new file.'}\n            user_exec_globals['append_to_file'](filename, ' World!')\n            with open(filename, 'r') as f: content = f.read()\n            if content != 'Hello World!':\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect output for appending to existing file.'}\n            os.remove(filename) # Clean up\n            return {'passed': True, 'score': 1.0, 'message': 'All tests passed!'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Function `append_to_file` not found or not callable.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
             }
-        ]
+        ],
+        "solution_criteria": ""
     },
     {
-        "title": "Error Handling and Exceptions",
-        "filename": "lessons/lesson7.md",
-        "exercise_checks": [
-            {
-                "prompt": "Write a `try-except` block to handle a `ZeroDivisionError`. Try to divide 10 by 0. In the `except` block, print 'Cannot divide by zero!'.",
-                "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    import io, sys\n    old_stdout = sys.stdout\n    redirected_output = io.StringIO()\n    sys.stdout = redirected_output\n    try:\n        exec(user_code, globals())\n        output = redirected_output.getvalue().strip()\n        sys.stdout = old_stdout\n        if output == 'Cannot divide by zero!':\n            return True\n        else:\n            return False\n    except Exception:\n        sys.stdout = old_stdout\n        return False\n"
-            }
-        ]
-    },
-    {
+        "id": "oop_basics",
         "title": "Object-Oriented Programming Basics",
-        "filename": "lessons/lesson8.md",
-        "exercise_checks": [
+        "content_file": "lessons/lessons_generated/oop_basics.md",
+        "exercises": [
             {
-                "prompt": "Define a class `Car` with an `__init__` method that takes `make` and `model` as parameters and assigns them to instance variables. Create an instance of `Car` with 'Toyota' and 'Camry', then print its `make`.",
-                "initial_code": "",
-                "check_function": "def check_result(user_code, expected_output):\n    import io, sys\n    old_stdout = sys.stdout\n    redirected_output = io.StringIO()\n    sys.stdout = redirected_output\n    try:\n        exec(user_code, globals())\n        output = redirected_output.getvalue().strip()\n        sys.stdout = old_stdout\n        if output == 'Toyota':\n            return True\n        else:\n            return False\n    except Exception:\n        sys.stdout = old_stdout\n        return False\n"
+                "prompt": "Create a class called `Rectangle` with attributes `width` and `height`.  Add a method called `area` that calculates and returns the area of the rectangle.",
+                "initial_code": "class Rectangle:\n    pass",
+                "check_function": "import io, sys\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'Rectangle' in user_exec_globals and hasattr(user_exec_globals['Rectangle'], 'area') and callable(getattr(user_exec_globals['Rectangle'], 'area')):\n            rect = user_exec_globals['Rectangle'](5, 10)\n            area = rect.area()\n            if area == 50:\n                return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n            else:\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect area calculation.'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Class or method not found.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": ""
+            },
+            {
+                "prompt": "Create a class called `Circle` with an attribute `radius`.  Add methods `area` and `circumference` that calculate and return, respectively, the area and circumference of the circle. Use the math module. Handle potential errors gracefully. Print an appropriate message if radius is invalid (e.g., negative).",
+                "initial_code": "import math\nclass Circle:\n    pass",
+                "check_function": "import io, sys, math\ndef check_result(user_code, expected_output):\n    captured_output = io.StringIO()\n    original_stdout = sys.stdout\n    sys.stdout = captured_output\n    try:\n        user_exec_globals = {'__builtins__': __builtins__, 'math': math}\n        exec(user_code, user_exec_globals)\n        sys.stdout = original_stdout\n        user_output = captured_output.getvalue().strip()\n        if 'Circle' in user_exec_globals and hasattr(user_exec_globals['Circle'], 'area') and callable(getattr(user_exec_globals['Circle'], 'area')) and hasattr(user_exec_globals['Circle'], 'circumference') and callable(getattr(user_exec_globals['Circle'], 'circumference')):\n            circle = user_exec_globals['Circle'](5)\n            area = circle.area()\n            circumference = circle.circumference()\n            if abs(area - 78.5398) < 0.001 and abs(circumference - 31.4159) < 0.001:\n                temp_output_capture = io.StringIO()\n                sys.stdout = temp_output_capture\n                user_exec_globals['Circle'](-1)\n                sys.stdout = original_stdout\n                error_message = temp_output_capture.getvalue().strip()\n                if \"invalid\" in error_message.lower():\n                    return {'passed': True, 'score': 1.0, 'message': 'Correct solution!'}\n                else:\n                    return {'passed': False, 'score': 0.8, 'message': 'Error handling for invalid radius failed.'}\n            else:\n                return {'passed': False, 'score': 0.5, 'message': 'Incorrect area or circumference calculation.'}\n        else:\n            return {'passed': False, 'score': 0.0, 'message': 'Class or method not found.'}\n    except SyntaxError as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.1, 'message': f'Syntax Error in user code: {e}'}\n    except Exception as e:\n        sys.stdout = original_stdout\n        return {'passed': False, 'score': 0.0, 'message': f'Runtime Error in user code: {e}'}\n    finally:\n        sys.stdout = original_stdout",
+                "expected_output": "Invalid radius"
             }
-        ]
+        ],
+        "solution_criteria": ""
     }
 ]

@@ -4,3 +4,4 @@ setuptools
 wheel
 typing
 google.generativeai
+dotenv
