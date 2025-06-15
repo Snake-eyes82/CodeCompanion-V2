@@ -11,10 +11,14 @@ import io # Added for capturing output in check_code
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTextEdit, QVBoxLayout, QHBoxLayout,
     QWidget, QPushButton, QLabel, QSplitter, QMessageBox, QListWidget,
-    QListWidgetItem, QSizePolicy, QMenuBar
+    QListWidgetItem, QSizePolicy, QMenu, QDialog, QComboBox, # QMenu and QDialog are already here, good.
+    QInputDialog, QLineEdit # <--- ADD THIS ONE
 )
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QFont, QAction
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtGui import (
+    QColor, QTextCharFormat, QTextCursor, QFont, QAction,
+    QIntValidator # <--- ADD THIS ONE (it's in QtGui for PySide6, just like PyQt5)
+)
+from PySide6.QtCore import Qt, QSettings, QRegularExpression # QRegularExpression is correct for QRegExp in PySide6
 
 # Import your actual AI agent
 from ai_agent import SelfImprovingAgent
@@ -29,41 +33,44 @@ class PythonLearningTool(QMainWindow):
         self.setWindowTitle("Python Learning Tool")
         self.setGeometry(100, 100, 1200, 800) # Initial window size
 
-        # --- INITIALIZE ALL ATTRIBUTES FIRST ---
+        # --- INITIALIZE ALL NON-UI RELATED ATTRIBUTES FIRST ---
         self.lessons_data = [] # Stores lesson content from lessons.json
         self.current_lesson_index = -1 # No lesson selected initially
         self.current_exercise_index = 0
-        #self.load_user_progress = {} # Stores user scores and attempts
-        self.load_user_progress
         self.exercise_attempts = {} # Initialize as an empty dictionary
-        # REMOVED: self.load_lesson (no need to store method reference here)
-        self.ai_agent = None
-        self.ai_enabled_globally = True # Tracks if AI *can* be enabled (API key, init status)
-        self.ai_enabled = True # This will be the current toggled state, defaulting to global status
 
-        self.current_exercise_solution_criteria = "" # Stores expected_output for current exercise
-        self.current_exercise_check_function = "" # Stores the check_function string for current exercise
+        # Initialize attributes that will be loaded/managed by QSettings, with initial defaults
+        self.ai_enabled_globally = True
+        self.ai_enabled = True
+        self.current_theme = 'Dark'
+        self.code_font_size = 10
+        self.ai_model_name = 'gemini-1.5-flash'
+        self.max_ai_tokens = 1000
+
+        self.current_exercise_solution_criteria = ""
+        self.current_exercise_check_function = ""
         
+        self.ai_agent = None
+
         # Directory setup
         self.lessons_dir = os.path.join(os.path.dirname(__file__), 'lessons')
         self.lessons_json_path = os.path.join(self.lessons_dir, 'lessons.json')
         self.lessons_generated_dir = os.path.join(self.lessons_dir, 'lessons_generated')
-        
+
         os.makedirs(self.lessons_dir, exist_ok=True)
         os.makedirs(self.lessons_generated_dir, exist_ok=True)
 
-        self.settings = QSettings("PythonLearningTool", "Settings") # For saving user preferences
-        # --- END INITIALIZATION ---
+        # Initialize QSettings
+        self.settings = QSettings("PythonLearningTool", "Settings")
 
-        # Load settings here so ai_enabled is set before init_ui/menu
-        self.load_settings() # Load settings at startup (including AI toggle)
+        # --- CRITICAL ORDER: UI INITIALIZATION BEFORE LOADING SETTINGS ---
+        self.init_ui() # This MUST create self.code_editor, self.output_text_edit, self.lesson_text_edit, etc.
+        self.create_menu() # Create the menu bar (needs self.ai_enabled, self.toggle_ai_action, etc.)
 
-        # --- CALL init_ui() AND create_menu() AFTER ALL WIDGETS ARE READY ---
-        self.init_ui() # This creates self.lesson_list_widget and other UI elements
-        self.create_menu() # Create the menu bar (uses self.ai_enabled, self.toggle_ai_action)
-        # --- END UI INITIALIZATION ---
+        # --- NOW LOAD SETTINGS (UI WIDGETS ARE NOW AVAILABLE) ---
+        self.load_settings() # This will apply theme and font size to existing widgets
 
-        # Initialize AI Agent (after setting up logging and potentially loading settings)
+        # --- INITIALIZE AI AGENT (AFTER SETTINGS ARE LOADED/DEFAULTS ARE SET) ---
         print(f"DEBUG: GOOGLE_API_KEY from os.environ: {os.environ.get('GOOGLE_API_KEY')}")
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
@@ -72,8 +79,9 @@ class PythonLearningTool(QMainWindow):
 
         if self.ai_enabled_globally:
             try:
-                # Assuming SelfImprovingAgent is defined and imported elsewhere
-                self.ai_agent = SelfImprovingAgent(api_key=api_key)
+                self.ai_agent = SelfImprovingAgent(api_key=api_key,
+                                                   model_name=self.ai_model_name,
+                                                   max_output_tokens=self.max_ai_tokens)
                 if self.ai_agent.api_status != "READY":
                     logging.error(f"AI Agent initialization failed: {self.ai_agent.api_status}. AI features disabled.")
                     QMessageBox.critical(self, "AI Initialization Failed", f"AI Agent could not be initialized: {self.ai_agent.api_status}. AI features will be disabled. Check your internet connection or API key validity.")
@@ -84,8 +92,8 @@ class PythonLearningTool(QMainWindow):
                 logging.error(f"Unexpected error during AI Agent initialization: {e}", exc_info=True)
                 QMessageBox.critical(self, "AI Initialization Error", f"An unexpected error occurred during AI Agent initialization: {e}. AI features will be disabled.")
                 self.ai_enabled_globally = False
-        
-        # Conditional lesson loading/generation
+
+        # --- CONDITIONAL LESSON LOADING/GENERATION ---
         if not os.path.exists(self.lessons_json_path):
             logging.info("lessons.json not found. Attempting to generate initial lessons.")
             if self.ai_enabled_globally and self.ai_agent and self.ai_agent.api_status == "READY":
@@ -94,15 +102,13 @@ class PythonLearningTool(QMainWindow):
                 logging.warning("AI is not available to generate initial lessons. Application might be limited.")
                 QMessageBox.warning(self, "No Lessons Found", "No lessons found and AI is not available to generate them. Application functionality will be limited.")
 
-        # This will now call the unified load_lesson method:
-        # It should (1) load all lessons from lessons.json into self.lessons_data
-        # AND (2) populate the self.lesson_list_widget
-        # AND (3) if lessons exist, display the first one (index 0).
-        self.load_lesson() # Call without arguments for initial load of all lessons & display of first.
+        # --- LOAD LESSONS AND USER PROGRESS ---
+        self.load_lesson() # This will now call the unified load_lesson method:
         self.load_user_progress() # Load progress after lessons are available
 
+        # --- FINAL UI UPDATES ---
         self.update_ai_status_label() # Update AI status label after all initialization
-        
+    
     def load_user_progress(self):
         """Loads user progress from a JSON file."""
         progress_file = "user_progress.json"
@@ -189,6 +195,7 @@ class PythonLearningTool(QMainWindow):
         self.lesson_content_text_edit.setReadOnly(True)
         self.lesson_content_text_edit.setPlaceholderText("Select a lesson to view its content.")
         self.lesson_content_text_edit.setObjectName("lessonContent") # Assign object name for CSS
+        self.lesson_content_text_edit.setFont(QFont("Segoe UI", 10))
 
         # Code Editor
         self.code_editor = QTextEdit()
@@ -306,28 +313,63 @@ class PythonLearningTool(QMainWindow):
         
 
     def create_menu(self):
-        """Creates the application's menu bar."""
-        menu_bar = self.menuBar()
+            menubar = self.menuBar()
 
-        # File Menu
-        file_menu = menu_bar.addMenu("&File")
-        exit_action = QAction("&Exit", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+            # File Menu
+            file_menu = menubar.addMenu("&File")
+            # Add 'Save Progress' action
+            save_progress_action = QAction("Save Progress", self)
+            save_progress_action.triggered.connect(self.save_user_progress)
+            file_menu.addAction(save_progress_action)
+            # Add 'Load Progress' action
+            load_progress_action = QAction("Load Progress", self)
+            load_progress_action.triggered.connect(self.load_user_progress)
+            file_menu.addAction(load_progress_action)
+            file_menu.addSeparator() # Separator for clarity
+            exit_action = QAction("&Exit", self)
+            exit_action.triggered.connect(self.close)
+            file_menu.addAction(exit_action)
 
-        # Settings Menu
-        settings_menu = menu_bar.addMenu("&Settings")
-        self.toggle_ai_action = QAction("Enable AI", self, checkable=True)
-        self.toggle_ai_action.setChecked(self.ai_enabled)
-        self.toggle_ai_action.triggered.connect(self.toggle_ai_features)
-        settings_menu.addAction(self.toggle_ai_action)
+            # AI Menu
+            ai_menu = menubar.addMenu("&AI") # Use "&AI" for Alt+A shortcut
+            self.toggle_ai_action = QAction("AI Features: Enabled", self, checkable=True)
+            self.toggle_ai_action.setChecked(self.ai_enabled) # Set initial state
+            self.toggle_ai_action.triggered.connect(self.toggle_ai_features)
+            ai_menu.addAction(self.toggle_ai_action)
 
-        # Help Menu
-        help_menu = menu_bar.addMenu("&Help")
-        about_action = QAction("&About", self)
-        about_action.triggered.connect(self.show_about_dialog)
-        help_menu.addAction(about_action)
+            # New: AI Model Settings (under AI menu)
+            ai_model_settings_action = QAction("AI Model Settings...", self)
+            ai_model_settings_action.triggered.connect(self.show_ai_model_settings_dialog)
+            ai_menu.addAction(ai_model_settings_action)
 
+
+            # Settings Menu (NEW TOP-LEVEL MENU)
+            settings_menu = menubar.addMenu("&Settings") # This is the new top-level menu
+
+            # Theme Submenu (within Settings)
+            themes_submenu = QMenu("Themes", self) # Create a QMenu for themes
+            dark_theme_action = QAction("Dark Theme", self)
+            dark_theme_action.triggered.connect(lambda: self.apply_theme('Dark'))
+            themes_submenu.addAction(dark_theme_action)
+
+            light_theme_action = QAction("Light Theme", self)
+            light_theme_action.triggered.connect(lambda: self.apply_theme('Light'))
+            themes_submenu.addAction(light_theme_action)
+            # Add more theme actions here if you create more themes (e.g., 'Blue', 'Green')
+
+            settings_menu.addMenu(themes_submenu) # Add the themes submenu to the Settings menu
+
+            # Font Size (directly under Settings)
+            font_size_action = QAction("Font Size...", self)
+            font_size_action.triggered.connect(self.show_font_size_dialog)
+            settings_menu.addAction(font_size_action)
+
+            # Help Menu
+            help_menu = menubar.addMenu("&Help")
+            about_action = QAction("&About", self)
+            about_action.triggered.connect(self.show_about_dialog) # Assuming you have this dialog
+            help_menu.addAction(about_action)
+        
     def toggle_ai_features(self, checked):
         """Toggles AI features on/off and updates status."""
         self.ai_enabled = checked
@@ -983,19 +1025,36 @@ class PythonLearningTool(QMainWindow):
 
 
     def load_settings(self):
-        self.ai_enabled = self.settings.value("ai_enabled", True, type=bool)
-        logging.info(f"Loaded AI enabled setting: {self.ai_enabled}")
-        self.update_ai_status_label()
-        
-        if hasattr(self, 'toggle_ai_action'):
-            self.toggle_ai_action.setChecked(self.ai_enabled)
-            self.toggle_ai_action.setText(f"AI Features: {'Enabled' if self.ai_enabled else 'Disabled'}")
+        # QSettings automatically handles existence, provides defaults
+        self.ai_enabled = self.settings.value('ai_enabled', True, type=bool)
+        self.api_key_set = self.settings.value('api_key_set', False, type=bool)
+        self.current_theme = self.settings.value('theme', 'Dark', type=str)
+        self.code_font_size = self.settings.value('font_size', 10, type=int)
+        self.ai_model_name = self.settings.value('ai_model', 'gemini-pro', type=str)
+        self.max_ai_tokens = self.settings.value('max_ai_tokens', 1000, type=int)
 
+        logging.info("Settings loaded via QSettings.")
+
+        # Apply loaded settings immediately
+        self.apply_theme(self.current_theme)
+        self.apply_font_size(self.code_font_size)
+
+        # Update the AI agent's model and tokens if the agent exists
+        if self.ai_agent:
+            self.ai_agent.update_model(self.ai_model_name)
+            self.ai_agent.update_max_tokens(self.max_ai_tokens)
+            
     def save_settings(self):
-        """Saves application settings, including AI enabled state."""
-        # QSettings can save bools directly.
-        self.settings.setValue("ai_enabled", self.ai_enabled)
-        logging.info(f"Saved AI enabled setting: {self.ai_enabled}")
+        self.settings.setValue('ai_enabled', self.ai_enabled)
+        self.settings.setValue('api_key_set', self.api_key_set)
+        self.settings.setValue('theme', self.current_theme)
+        self.settings.setValue('font_size', self.code_font_size)
+        self.settings.setValue('ai_model', self.ai_model_name)
+        self.settings.setValue('max_ai_tokens', self.max_ai_tokens)
+
+        # QSettings automatically saves changes, but a sync can force it
+        self.settings.sync()
+        logging.info("Settings saved via QSettings.")
 
     def update_ai_status_label(self):
         if self.ai_enabled_globally:
@@ -1027,11 +1086,267 @@ class PythonLearningTool(QMainWindow):
         self.ask_ai_general_help_button.setEnabled(self.ai_enabled)
         self.check_answer_button.setEnabled(self.ai_enabled) # Assuming check_answer uses AI
 
+    def show_ai_model_settings_dialog(self):
+        """Opens a dialog to configure AI model settings."""
+        #from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QIntValidator # Local import for dialog widgets
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("AI Model Settings")
+        layout = QVBoxLayout(dialog)
+
+        # Model Selection
+        model_label = QLabel("AI Model:")
+        model_combo = QComboBox()
+        model_combo.addItems(['gemini-pro', 'gemini-1.5-flash-latest', 'gemini-1.5-pro-latest']) # Add other models if available
+        model_combo.setCurrentText(self.ai_model_name)
+
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(model_combo)
+        layout.addLayout(model_layout)
+
+        # Max Tokens
+        tokens_label = QLabel("Max Output Tokens:")
+        tokens_input = QLineEdit(str(self.max_ai_tokens))
+        tokens_input.setValidator(QIntValidator(1, 4000)) # Adjust max as per Gemini limits
+
+        tokens_layout = QHBoxLayout()
+        tokens_layout.addWidget(tokens_label)
+        tokens_layout.addWidget(tokens_input)
+        layout.addLayout(tokens_layout)
+
+        # Buttons
+        buttons_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("Cancel")
+        ok_button.clicked.connect(dialog.accept)
+        cancel_button.clicked.connect(dialog.reject)
+        buttons_layout.addStretch(1)
+        buttons_layout.addWidget(ok_button)
+        buttons_layout.addWidget(cancel_button)
+        layout.addLayout(buttons_layout)
+
+        if dialog.exec_() == QDialog.Accepted:
+            new_model = model_combo.currentText()
+            new_tokens = int(tokens_input.text())
+
+            if new_model != self.ai_model_name:
+                self.ai_model_name = new_model
+                logging.info(f"AI Model updated to: {self.ai_model_name}")
+                if self.ai_agent:
+                    self.ai_agent.update_model(self.ai_model_name)
+
+            if new_tokens != self.max_ai_tokens:
+                self.max_ai_tokens = new_tokens
+                logging.info(f"Max AI Output Tokens updated to: {self.max_ai_tokens}")
+                if self.ai_agent:
+                    self.ai_agent.update_max_tokens(self.max_ai_tokens) # Add this method to ai_agent.py
+
+            self.save_settings() # Save changes
+    
+    def show_font_size_dialog(self):
+        """Opens a dialog to select font size."""
+        #from PySide6.QtWidgets import QInputDialog # Local import for QInputDialog
+
+        current_size = self.code_font_size
+        sizes = [8, 9, 10, 11, 12, 14, 16] # Common font sizes
+        item, ok = QInputDialog.getItem(self, "Select Font Size", "Font Size:",
+                                          [str(s) for s in sizes],
+                                          sizes.index(current_size) if current_size in sizes else 2,
+                                          False)
+        if ok and item:
+            new_size = int(item)
+            if new_size != current_size:
+                self.apply_font_size(new_size)
+                self.save_settings() # Save changes immediately
+                
+    def apply_theme(self, theme_name):
+        """Applies the specified theme (Dark or Light) to the application."""
+        if theme_name == 'Dark':
+            self.apply_dark_theme()
+        elif theme_name == 'Light':
+            self.apply_light_theme()
+        else:
+            logging.warning(f"Unknown theme: {theme_name}. Defaulting to Dark.")
+            self.apply_dark_theme() # Fallback to dark theme
+
+        self.current_theme = theme_name # Update current_theme after applying
+
+    def apply_dark_theme(self):
+        """Applies a dark theme to the application."""
+        # This QSS provides a basic dark theme
+        qss = """
+        QMainWindow, QWidget {
+            background-color: #333333; /* Dark grey background */
+            color: #E0E0E0; /* Light grey text */
+        }
+        QTextEdit {
+            background-color: #2B2B2B; /* Even darker for code/text areas */
+            color: #E0E0E0;
+            border: 1px solid #555555;
+            font-family: "Consolas", "Courier New", monospace;
+        }
+        QPushButton {
+            background-color: #555555;
+            color: #FFFFFF;
+            border: 1px solid #777777;
+            padding: 5px 10px;
+            border-radius: 3px;
+        }
+        QPushButton:hover {
+            background-color: #666666;
+        }
+        QPushButton:pressed {
+            background-color: #444444;
+        }
+        QSplitter::handle {
+            background-color: #555555;
+        }
+        QListWidget {
+            background-color: #3A3A3A;
+            color: #E0E0E0;
+            border: 1px solid #555555;
+        }
+        QListWidget::item:selected {
+            background-color: #007ACC; /* Highlight color */
+            color: #FFFFFF;
+        }
+        QMenuBar {
+            background-color: #333333;
+            color: #E0E0E0;
+        }
+        QMenuBar::item:selected {
+            background-color: #007ACC;
+        }
+        QMenu {
+            background-color: #333333;
+            color: #E0E0E0;
+            border: 1px solid #555555;
+        }
+        QMenu::item:selected {
+            background-color: #007ACC;
+        }
+        QLabel {
+            color: #E0E0E0;
+        }
+        QComboBox {
+            background-color: #555555;
+            color: #E0E0E0;
+            border: 1px solid #777777;
+            padding: 1px 0px 1px 3px;
+            border-radius: 3px;
+        }
+        QLineEdit {
+            background-color: #2B2B2B;
+            color: #E0E0E0;
+            border: 1px solid #555555;
+        }
+        """
+        self.setStyleSheet(qss)
+        logging.info("Dark theme applied.")
+
+    def apply_light_theme(self):
+        """Applies a light theme to the application."""
+        # This QSS provides a basic light theme
+        qss = """
+        QMainWindow, QWidget {
+            background-color: #F0F0F0; /* Light grey background */
+            color: #333333; /* Dark text */
+        }
+        QTextEdit {
+            background-color: #FFFFFF; /* White for code/text areas */
+            color: #000000;
+            border: 1px solid #CCCCCC;
+            font-family: "Consolas", "Courier New", monospace;
+        }
+        QPushButton {
+            background-color: #E0E0E0;
+            color: #333333;
+            border: 1px solid #B0B0B0;
+            padding: 5px 10px;
+            border-radius: 3px;
+        }
+        QPushButton:hover {
+            background-color: #D0D0D0;
+        }
+        QPushButton:pressed {
+            background-color: #C0C0C0;
+        }
+        QSplitter::handle {
+            background-color: #CCCCCC;
+        }
+        QListWidget {
+            background-color: #F5F5F5;
+            color: #333333;
+            border: 1px solid #CCCCCC;
+        }
+        QListWidget::item:selected {
+            background-color: #ADD8E6; /* Light blue highlight */
+            color: #000000;
+        }
+        QMenuBar {
+            background-color: #E0E0E0;
+            color: #333333;
+        }
+        QMenuBar::item:selected {
+            background-color: #ADD8E6;
+        }
+        QMenu {
+            background-color: #E0E0E0;
+            color: #333333;
+            border: 1px solid #CCCCCC;
+        }
+        QMenu::item:selected {
+            background-color: #ADD8E6;
+        }
+        QLabel {
+            color: #333333;
+        }
+        QComboBox {
+            background-color: #E0E0E0;
+            color: #333333;
+            border: 1px solid #B0B0B0;
+            padding: 1px 0px 1px 3px;
+            border-radius: 3px;
+        }
+        QLineEdit {
+            background-color: #FFFFFF;
+            color: #000000;
+            border: 1px solid #CCCCCC;
+        }
+        """
+        self.setStyleSheet(qss)
+        logging.info("Light theme applied.")
+
+    def apply_font_size(self, size):
+        """Applies the given font size to the code editor and output text areas."""
+        font = QFont()
+        font.setPointSize(size)
+        # Apply to code editor
+        self.code_editor.setFont(font)
+        # Apply to output area
+        self.output_text_edit.setFont(font)
+        # You might also want to apply it to other text-heavy widgets like lesson_text_edit
+        self.lesson_content_text_edit.setFont(font)
+        # Store the current font size in an attribute
+        self.code_font_size = size
+        logging.info(f"Font size applied: {size}")
+
     def show_about_dialog(self):
-        QMessageBox.about(self, "About Python Learning Tool",
-                          "<h2>Python Learning Tool v1.0</h2>"
-                          "<p>A desktop application for learning Python with AI assistance.</p>"
-                          "<p>Developed with PySide6.</p>")
+        """Displays an About dialog with information about the application."""
+        QMessageBox.about(
+            self,
+            "About CodeCompanion V2",
+            """
+            <h3>CodeCompanion V2</h3>
+            <p><strong>Interactive Python Learning Tool with AI Integration</strong></p>
+            <p>Version: 2.0.0</p>
+            <p>Developed by: [Your Name/Alias Here]</p>
+            <p>CodeCompanion V2 is designed to help users learn Python interactively. It features an integrated code editor, lesson display, and AI assistance powered by Google Gemini to provide a rich learning experience.</p>
+            <p>For more information, visit the <a href="https://github.com/Snake-eyes82/CodeCompanion-V2">GitHub Repository</a>.</p>
+            <p>Built with PyQt5 and Google Gemini API.</p>
+            """
+        )
 
     def apply_window_box_styles(self):
         """Applies a dark theme and rounded corners to the main window's boxes."""

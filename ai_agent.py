@@ -53,6 +53,40 @@ class SelfImprovingAgent:
             'hint_relevance': 0.7,
         }
         self.iteration_count = 0
+        
+    # Add the update_model and update_max_tokens methods
+    def update_model(self, new_model_name: str):
+        """Updates the AI model used for generation."""
+        if self.model_name != new_model_name:
+            self.model_name = new_model_name
+            if self.api_status == "READY": # Only update if agent is functional
+                try:
+                    self.model = genai.GenerativeModel(
+                        model_name=self.model_name,
+                        generation_config=genai.GenerationConfig(max_output_tokens=self.max_output_tokens)
+                    )
+                    logging.info(f"AI Agent model updated to: {new_model_name}")
+                except Exception as e:
+                    logging.error(f"Error updating AI model to {new_model_name}: {e}")
+                    # Optionally set status to error if update fails
+                    self.api_status = f"MODEL_UPDATE_ERROR: {e}"
+
+    def update_max_tokens(self, new_max_tokens: int):
+        """Updates the maximum output tokens for AI generation."""
+        if self.max_output_tokens != new_max_tokens:
+            self.max_output_tokens = new_max_tokens
+            if self.api_status == "READY": # Only update if agent is functional
+                try:
+                    # Reinitialize the model with the new max_output_tokens
+                    self.model = genai.GenerativeModel(
+                        model_name=self.model_name,
+                        generation_config=genai.GenerationConfig(max_output_tokens=self.max_output_tokens)
+                    )
+                    logging.info(f"AI Agent max output tokens updated to: {new_max_tokens}")
+                except Exception as e:
+                    logging.error(f"Error updating AI max output tokens to {new_max_tokens}: {e}")
+                    # Optionally set status to error if update fails
+                    self.api_status = f"TOKENS_UPDATE_ERROR: {e}"
 
     def _generate_content_with_error_handling(self, prompt_parts: List[str], **kwargs) -> str:
         """Helper to call Gemini API with robust error handling."""
