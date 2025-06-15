@@ -1,844 +1,561 @@
 import sys
+import os
 import json
 import logging
-import re
-import os
+import io
 import builtins
-import traceback # Added for detailed error logging
-import io # Added for capturing output in check_code
+import traceback
+from functools import partial
 
-# Import from PySide6
+# PySide6 imports
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QTextEdit, QVBoxLayout, QHBoxLayout,
-    QWidget, QPushButton, QLabel, QSplitter, QMessageBox, QListWidget,
-    QListWidgetItem, QSizePolicy, QMenu, QDialog, QComboBox, # QMenu and QDialog are already here, good.
-    QInputDialog, QLineEdit # <--- ADD THIS ONE
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QTextEdit, QPushButton, QSplitter, QListWidget, QListWidgetItem,
+    QLabel, QMessageBox, QDialog, QComboBox, QLineEdit, QInputDialog,
+    QStatusBar, QMenuBar, QMenu, QSizePolicy
 )
-from PySide6.QtGui import (
-    QColor, QTextCharFormat, QTextCursor, QFont, QAction,
-    QIntValidator # <--- ADD THIS ONE (it's in QtGui for PySide6, just like PyQt5)
-)
-from PySide6.QtCore import Qt, QSettings, QRegularExpression # QRegularExpression is correct for QRegExp in PySide6
+from PySide6.QtCore import Qt, QSettings, QSize
+from PySide6.QtGui import QFont, QAction, QIntValidator, QColor, QTextCharFormat, QSyntaxHighlighter, QTextDocument
 
-# Import your actual AI agent
-from ai_agent import SelfImprovingAgent
-from dotenv import load_dotenv
+# Local application imports
+from ai_agent import SelfImprovingAgent # Assuming ai_agent.py exists and defines AIAgent
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-load_dotenv()  # Load environment variables from .env file
+
 class PythonLearningTool(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Python Learning Tool")
-        self.setGeometry(100, 100, 1200, 800) # Initial window size
+        self.setWindowTitle("CodeCompanion V2 - Interactive Python Learning")
+        self.setGeometry(100, 100, 1200, 800) # Increased initial window size
 
-        # --- INITIALIZE ALL NON-UI RELATED ATTRIBUTES FIRST ---
-        self.lessons_data = [] # Stores lesson content from lessons.json
-        self.current_lesson_index = -1 # No lesson selected initially
-        self.current_exercise_index = 0
-        self.exercise_attempts = {} # Initialize as an empty dictionary
+        # Initialize core data structures
+        self.lessons_data = []
+        self.current_lesson_index = -1
+        self.current_exercise_index = -1
+        self.exercise_attempts = {} # Stores attempts for exercises: {(lesson_idx, exercise_idx): num_attempts}
 
-        # Initialize attributes that will be loaded/managed by QSettings, with initial defaults
-        self.ai_enabled_globally = True
-        self.ai_enabled = True
-        self.current_theme = 'Dark'
-        self.code_font_size = 10
-        self.ai_model_name = 'gemini-1.5-flash'
-        self.max_ai_tokens = 1000
+        # Paths for lessons and configurations
+        self.lessons_dir = "lessons"
+        self.lessons_generated_dir = os.path.join(self.lessons_dir, "generated")
+        self.lessons_json_path = os.path.join(self.lessons_generated_dir, "lessons.json")
 
-        self.current_exercise_solution_criteria = ""
-        self.current_exercise_check_function = ""
-        
-        self.ai_agent = None
-
-        # Directory setup
-        self.lessons_dir = os.path.join(os.path.dirname(__file__), 'lessons')
-        self.lessons_json_path = os.path.join(self.lessons_dir, 'lessons.json')
-        self.lessons_generated_dir = os.path.join(self.lessons_dir, 'lessons_generated')
-
+        # Ensure lesson directories exist
         os.makedirs(self.lessons_dir, exist_ok=True)
         os.makedirs(self.lessons_generated_dir, exist_ok=True)
 
-        # Initialize QSettings
-        self.settings = QSettings("PythonLearningTool", "Settings")
+        # AI Agent and settings initialization
+        self.ai_agent = None
+        self.google_api_key = "" # Will be loaded from settings/env
+        self.ai_enabled = True # User toggle for AI features (can be overridden by global_ai_disabled)
+        self.ai_enabled_globally = False # True only if API key is set and AI agent initialized
+        self.ai_model_name = "gemini-1.5-flash"
+        self.max_ai_tokens = 1000
 
-        # --- CRITICAL ORDER: UI INITIALIZATION BEFORE LOADING SETTINGS ---
-        self.init_ui() # This MUST create self.code_editor, self.output_text_edit, self.lesson_text_edit, etc.
-        self.create_menu() # Create the menu bar (needs self.ai_enabled, self.toggle_ai_action, etc.)
+        # Application settings for persistence
+        self.settings = QSettings("CodeCompanion", "PythonLearningTool")
+        self.current_theme = "Dark" # Default theme
+        self.code_font_size = 10 # Default font size
 
-        # --- NOW LOAD SETTINGS (UI WIDGETS ARE NOW AVAILABLE) ---
-        self.load_settings() # This will apply theme and font size to existing widgets
+        # UI Initialization and layout setup
+        self.init_ui()
+        self.load_settings() # Load saved settings and initialize AI agent based on key
 
-        # --- INITIALIZE AI AGENT (AFTER SETTINGS ARE LOADED/DEFAULTS ARE SET) ---
-        print(f"DEBUG: GOOGLE_API_KEY from os.environ: {os.environ.get('GOOGLE_API_KEY')}")
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            logging.warning("GOOGLE_API_KEY environment variable not set. AI features will be disabled.")
-            self.ai_enabled_globally = False
+        # Initial content loading
+        self.load_lessons() # Load lessons from JSON or generate if not found
 
-        if self.ai_enabled_globally:
-            try:
-                self.ai_agent = SelfImprovingAgent(api_key=api_key,
-                                                   model_name=self.ai_model_name,
-                                                   max_output_tokens=self.max_ai_tokens)
-                if self.ai_agent.api_status != "READY":
-                    logging.error(f"AI Agent initialization failed: {self.ai_agent.api_status}. AI features disabled.")
-                    QMessageBox.critical(self, "AI Initialization Failed", f"AI Agent could not be initialized: {self.ai_agent.api_status}. AI features will be disabled. Check your internet connection or API key validity.")
-                    self.ai_enabled_globally = False
-                else:
-                    logging.info("AI Agent initialized successfully.")
-            except Exception as e:
-                logging.error(f"Unexpected error during AI Agent initialization: {e}", exc_info=True)
-                QMessageBox.critical(self, "AI Initialization Error", f"An unexpected error occurred during AI Agent initialization: {e}. AI features will be disabled.")
-                self.ai_enabled_globally = False
-
-        # --- CONDITIONAL LESSON LOADING/GENERATION ---
-        if not os.path.exists(self.lessons_json_path):
-            logging.info("lessons.json not found. Attempting to generate initial lessons.")
-            if self.ai_enabled_globally and self.ai_agent and self.ai_agent.api_status == "READY":
-                self.generate_initial_lessons_with_ai()
-            else:
-                logging.warning("AI is not available to generate initial lessons. Application might be limited.")
-                QMessageBox.warning(self, "No Lessons Found", "No lessons found and AI is not available to generate them. Application functionality will be limited.")
-
-        # --- LOAD LESSONS AND USER PROGRESS ---
-        self.load_lesson() # This will now call the unified load_lesson method:
-        self.load_user_progress() # Load progress after lessons are available
-
-        # --- FINAL UI UPDATES ---
-        self.update_ai_status_label() # Update AI status label after all initialization
-    
-    def load_user_progress(self):
-        """Loads user progress from a JSON file."""
-        progress_file = "user_progress.json"
-        if os.path.exists(progress_file):
-            try:
-                with open(progress_file, 'r', encoding='utf-8') as f:
-                    self.user_progress = json.load(f)
-                logging.info("User progress loaded successfully.")
-                self.output_text_edit.append("User progress loaded.")
-                
-                # Restore exercise attempts from loaded progress
-                self.exercise_attempts = self.user_progress.get('exercise_attempts', {})
-
-                # You might also want to restore current lesson/exercise from here
-                # Example:
-                # self.current_lesson_index = self.user_progress.get('current_lesson_index', 0)
-                # self.current_exercise_index = self.user_progress.get('current_exercise_index', 0)
-                # self.load_lesson(self.current_lesson_index) # Reload the last active lesson/exercise
-                # self.display_exercise(self.current_exercise_index)
-            except Exception as e:
-                logging.error(f"Error loading user progress: {e}", exc_info=True)
-                self.output_text_edit.append(f"<font color='red'>Error loading user progress: {e}</font>")
-                self.user_progress = {} # Reset to empty if corrupted
-                self.exercise_attempts = {}
-        else:
-            logging.info("user_progress.json not found. Starting with fresh progress.")
-            self.user_progress = {}
-            self.exercise_attempts = {}
-
-    def save_user_progress(self):
-        """Saves current user progress to a JSON file."""
-        progress_file = "user_progress.json"
-        try:
-            # Prepare data to save
-            data_to_save = {
-                'exercise_attempts': self.exercise_attempts,
-                # You might add other progress data here, e.g.:
-                # 'completed_exercises': self.completed_exercises,
-                # 'current_lesson_index': self.current_lesson_index,
-                # 'current_exercise_index': self.current_exercise_index,
-            }
-            with open(progress_file, 'w', encoding='utf-8') as f:
-                json.dump(data_to_save, f, indent=4)
-            logging.info("User progress saved successfully.")
-        except Exception as e:
-            logging.error(f"Error saving user progress: {e}", exc_info=True)
-            self.output_text_edit.append(f"<font color='red'>Error saving user progress: {e}</font>")
-
-    def closeEvent(self, event):
-        """Overrides the close event to save user progress."""
-        self.save_user_progress()
-        event.accept() # Accept the close event, allowing the window to close
 
     def init_ui(self):
+        """Initializes the main user interface components and layout."""
+        # Central widget and main layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget)
+        self.main_layout = QVBoxLayout(self.central_widget)
 
-        # Left Panel (Lessons List)
-        self.left_panel_layout = QVBoxLayout()
-        self.lessons_label = QLabel("Lessons:")
-        self.lessons_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.left_panel_layout.addWidget(self.lessons_label)
+        # Create a splitter for lesson list and lesson content
+        self.top_splitter = QSplitter(Qt.Horizontal)
+        self.main_layout.addWidget(self.top_splitter)
 
-        # Lessons List Widget
+        # Lesson List on the left
         self.lesson_list_widget = QListWidget()
-        self.lesson_list_widget.setObjectName("lessonList") # For styling
-        self.lesson_list_widget.setMinimumWidth(180)
-        self.lesson_list_widget.setMaximumWidth(250)
-        # CORRECTED CONNECTION: Use itemClicked and a handler (lesson_list_item_clicked)
-        # This handler will then call load_lesson with the appropriate index.
-        self.lesson_list_widget.itemClicked.connect(self.lesson_list_item_clicked)
-        self.left_panel_layout.addWidget(self.lesson_list_widget)
+        self.lesson_list_widget.setObjectName("lessonList") # Object name for QSS styling
+        self.lesson_list_widget.setMaximumWidth(250) # Set a fixed maximum width
+        self.lesson_list_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding) # Fixed width, expanding height
+        self.top_splitter.addWidget(self.lesson_list_widget)
 
-        self.left_widget = QWidget()
-        self.left_widget.setLayout(self.left_panel_layout)
-        self.left_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        # Right side of the top splitter (Lesson Content and Code Editor)
+        self.right_top_container = QWidget()
+        self.right_top_layout = QVBoxLayout(self.right_top_container)
+        self.top_splitter.addWidget(self.right_top_container)
 
-        # Right Panel (Lesson Content, Code Editor, Output, AI Question)
-        self.right_panel_layout = QVBoxLayout()
-
-        # Lesson Content Text Edit
+        # Lesson Content Display
         self.lesson_content_text_edit = QTextEdit()
+        self.lesson_content_text_edit.setObjectName("lessonContent") # Object name for QSS styling
         self.lesson_content_text_edit.setReadOnly(True)
-        self.lesson_content_text_edit.setPlaceholderText("Select a lesson to view its content.")
-        self.lesson_content_text_edit.setObjectName("lessonContent") # Assign object name for CSS
-        self.lesson_content_text_edit.setFont(QFont("Segoe UI", 10))
+        self.right_top_layout.addWidget(self.lesson_content_text_edit)
+
+        # Code Editor and Output Splitter
+        self.bottom_splitter = QSplitter(Qt.Vertical)
+        self.right_top_layout.addWidget(self.bottom_splitter)
 
         # Code Editor
         self.code_editor = QTextEdit()
-        self.code_editor.setFont(QFont("Console", 10))
-        # Ensure apply_syntax_highlighting is defined later in your class
-        self.code_editor.textChanged.connect(self.apply_syntax_highlighting)
-        self.code_editor.setPlaceholderText("Write your Python code here...")
-        self.code_editor.setObjectName("codeEditor") # Assign object name for CSS
+        self.code_editor.setObjectName("codeEditor") # Object name for QSS styling
+        self.bottom_splitter.addWidget(self.code_editor)
 
-        # Run and Check Buttons
-        self.button_layout = QHBoxLayout()
-        self.run_code_button = QPushButton("Run Code") # Make sure this is present!
-        # Ensure run_user_code is defined later in your class
-        self.run_code_button.clicked.connect(self.run_user_code)
-        self.button_layout.addWidget(self.run_code_button)
-
-        self.check_answer_button = QPushButton("Check Answer") # Make sure this is present!
-        # Connect to the correct check_answer method
-        # self.check_answer_button.clicked.connect(lambda: self.check_answer_with_ai(self.code_editor.toPlainText())) # Old connection
-        self.check_answer_button.clicked.connect(lambda: self.check_answer_with_ai(self.code_editor.toPlainText())) # Use the unified check_answer
-        self.button_layout.addWidget(self.check_answer_button)
-        self.right_panel_layout.addLayout(self.button_layout) # Add the button_layout to the right_panel_layout
-
-        # Output Text Edit
+        # Output Text
         self.output_text_edit = QTextEdit()
+        self.output_text_edit.setObjectName("outputText") # Object name for QSS styling
         self.output_text_edit.setReadOnly(True)
-        self.output_text_edit.setPlaceholderText("Code output and AI feedback will appear here.")
-        self.output_text_edit.setObjectName("outputText") # Assign object name for CSS
+        self.bottom_splitter.addWidget(self.output_text_edit)
 
-        # Ask AI section (matches image layout)
-        self.ask_ai_label = QLabel("Ask The AI:") # Make sure this is present!
-        self.ask_ai_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        # Set initial sizes for splitters (adjust as needed)
+        self.top_splitter.setSizes([200, 800]) # Initial widths for lesson list and content area
+        self.bottom_splitter.setSizes([500, 300]) # Initial heights for code editor and output
 
-        self.ai_question_input = QTextEdit() # Make sure this is present!
-        self.ai_question_input.setPlaceholderText("Type your question here (e.g., 'What is a variable?', 'How does def work?')")
-        self.ai_question_input.setObjectName("aiQuestionInput") # Assign object name for CSS
-        self.ai_question_input.setMaximumHeight(80)
-        
-        self.ask_ai_general_help_button = QPushButton("Ask AI for General Help") # Make sure this is present!
-        # Ensure ask_ai_general_help is defined later in your class
+        # Controls for exercises and lessons
+        self.exercise_navigation_layout = QHBoxLayout()
+        self.prev_exercise_button = QPushButton("Previous Exercise")
+        self.next_exercise_button = QPushButton("Next Exercise")
+        self.run_code_button = QPushButton("Run Code")
+        self.check_answer_button = QPushButton("Check Answer (AI)")
+
+        self.exercise_navigation_layout.addWidget(self.prev_exercise_button)
+        self.exercise_navigation_layout.addWidget(self.next_exercise_button)
+        self.exercise_navigation_layout.addStretch(1) # Pushes buttons to the left
+        self.exercise_navigation_layout.addWidget(self.run_code_button)
+        self.exercise_navigation_layout.addWidget(self.check_answer_button)
+        self.main_layout.addLayout(self.exercise_navigation_layout)
+
+        self.lesson_navigation_layout = QHBoxLayout()
+        self.prev_lesson_button = QPushButton("Previous Lesson")
+        self.next_lesson_button = QPushButton("Next Lesson")
+        self.lesson_navigation_layout.addWidget(self.prev_lesson_button)
+        self.lesson_navigation_layout.addWidget(self.next_lesson_button)
+        self.lesson_navigation_layout.addStretch(1)
+        self.main_layout.addLayout(self.lesson_navigation_layout)
+
+        # AI Question Input
+        self.ai_question_input = QTextEdit()
+        self.ai_question_input.setObjectName("aiQuestionInput")
+        self.ai_question_input.setPlaceholderText("Ask the AI a general question or for help...")
+        self.ai_question_input.setFixedHeight(50) # Fixed height for input
+        self.main_layout.addWidget(self.ai_question_input)
+
+        self.ai_buttons_layout = QHBoxLayout()
+        self.ask_ai_general_help_button = QPushButton("Ask The AI")
+        self.ai_buttons_layout.addStretch(1)
+        self.ai_buttons_layout.addWidget(self.ask_ai_general_help_button)
+        self.main_layout.addLayout(self.ai_buttons_layout)
+
+
+        # Status Bar
+        self.status_bar = self.statusBar()
+        self.ai_status_label = QLabel("AI Status: Initializing...")
+        self.status_bar.addWidget(self.ai_status_label)
+        self.score_label = QLabel("Score: 0") # Placeholder for score
+        self.status_bar.addPermanentWidget(self.score_label) # Align to the right
+
+        # Menu Bar
+        self.create_menu_bar()
+
+        # Connect signals and slots
+        self.lesson_list_widget.itemClicked.connect(self.on_lesson_selected)
+        self.run_code_button.clicked.connect(self.run_user_code)
+        self.check_answer_button.clicked.connect(self.check_answer_with_ai)
+        self.prev_exercise_button.clicked.connect(self.prev_exercise)
+        self.next_exercise_button.clicked.connect(self.next_exercise)
+        self.prev_lesson_button.clicked.connect(self.prev_lesson)
+        self.next_lesson_button.clicked.connect(self.next_lesson)
         self.ask_ai_general_help_button.clicked.connect(self.ask_ai_general_help)
 
-        # Nested Splitter for Right Panel
-        self.right_splitter = QSplitter(Qt.Vertical)
-        self.right_splitter.addWidget(self.lesson_content_text_edit)
-        self.right_splitter.addWidget(self.code_editor)
-        self.right_splitter.addWidget(self.output_text_edit)
-        
-        # Wrap AI question input and button in a widget for splitter
-        ai_question_area_widget = QWidget()
-        ai_question_area_layout = QVBoxLayout(ai_question_area_widget)
-        ai_question_area_layout.setContentsMargins(0,0,0,0) # Remove extra margins
-        ai_question_area_layout.addWidget(self.ask_ai_label)
-        ai_question_area_layout.addWidget(self.ai_question_input)
-        ai_question_area_layout.addWidget(self.ask_ai_general_help_button)
-        self.right_splitter.addWidget(ai_question_area_widget)
+        # Apply initial theme and font size
+        self.apply_theme(self.current_theme) # Applies dark/light theme based on settings
+        self.apply_font_size(self.code_font_size) # Applies font size to text areas
 
-        self.right_splitter.setSizes([250, 250, 150, 100]) # Example distribution for content, code, output, AI
-        self.right_panel_layout.addWidget(self.right_splitter) # Add the splitter to the main right layout
+        # Update button states
+        self.update_navigation_buttons()
+        self.update_exercise_buttons_state()
 
 
-        # --- VITAL: ADD NAVIGATION BUTTONS HERE ---
-        # Lesson and Exercise Navigation Buttons
-        self.nav_button_layout = QHBoxLayout() # Create a new horizontal layout for navigation buttons
+    def create_menu_bar(self):
+        """Creates the application's menu bar with various actions."""
+        menu_bar = self.menuBar()
 
-        self.prev_exercise_button = QPushButton("Previous Exercise") # <--- ADD THIS
-        self.prev_exercise_button.clicked.connect(self.prev_exercise)
-        self.nav_button_layout.addWidget(self.prev_exercise_button) # <--- ADD THIS
+        # File Menu
+        file_menu = menu_bar.addMenu("&File")
+        exit_action = QAction("E&xit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
 
-        self.next_exercise_button = QPushButton("Next Exercise") # <--- ADD THIS
-        self.next_exercise_button.clicked.connect(self.next_exercise)
-        self.nav_button_layout.addWidget(self.next_exercise_button) # <--- ADD THIS
+        # Settings Menu
+        settings_menu = menu_bar.addMenu("&Settings")
 
-        self.prev_lesson_button = QPushButton("Previous Lesson") # <--- ADD THIS
-        self.prev_lesson_button.clicked.connect(self.prev_lesson)
-        self.nav_button_layout.addWidget(self.prev_lesson_button) # <--- ADD THIS
+        # Theme Sub-menu
+        theme_menu = settings_menu.addMenu("&Theme")
+        dark_theme_action = QAction("Dark Theme", self)
+        dark_theme_action.triggered.connect(lambda: self.apply_theme("Dark"))
+        theme_menu.addAction(dark_theme_action)
 
-        self.next_lesson_button = QPushButton("Next Lesson") # <--- ADD THIS
-        self.next_lesson_button.clicked.connect(self.next_lesson)
-        self.nav_button_layout.addWidget(self.next_lesson_button) # <--- ADD THIS
+        light_theme_action = QAction("Light Theme", self)
+        light_theme_action.triggered.connect(lambda: self.apply_theme("Light"))
+        theme_menu.addAction(light_theme_action)
 
-        self.right_panel_layout.addLayout(self.nav_button_layout) # <--- ADD THIS to add the nav layout to the right panel
-        # --- END VITAL NAVIGATION BUTTONS SECTION ---
+        # Font Size Action
+        font_size_action = QAction("Font Size...", self)
+        font_size_action.triggered.connect(self.show_font_size_dialog)
+        settings_menu.addAction(font_size_action)
 
+        # AI Model Settings Action
+        ai_model_settings_action = QAction("AI Model Settings...", self)
+        ai_model_settings_action.triggered.connect(self.show_ai_model_settings_dialog)
+        settings_menu.addAction(ai_model_settings_action)
 
-        self.right_widget = QWidget()
-        self.right_widget.setLayout(self.right_panel_layout)
-        self.right_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        # Main Splitter to divide left (lessons list) and right (content, code, output, ai) panels
-        self.main_splitter = QSplitter(Qt.Horizontal)
-        self.main_splitter.addWidget(self.left_widget)
-        self.main_splitter.addWidget(self.right_widget)
-        self.main_splitter.setSizes([200, 1000]) # Initial distribution for left list and right content
-        self.main_layout.addWidget(self.main_splitter)
-
-        # Status Bar for score (ensure this is present too!)
-        self.status_bar = self.statusBar()
-        self.score_label = QLabel("Score: N/A") # Make sure this is present!
-        self.status_bar.addPermanentWidget(self.score_label)
-
-        # Apply the styles for the window boxes and dark theme
-        # Ensure apply_window_box_styles is defined later in your class
-        self.apply_window_box_styles()
-        
-        # --- VITAL: AI Status Label - ENSURE THIS IS PRESENT AND UNCOMMENTED! ---
-        self.ai_status_label = QLabel("AI Status: Initializing...") # <--- ADD THIS
-        self.statusBar().addPermanentWidget(self.ai_status_label) # <--- ADD THIS
-        # --- END VITAL AI STATUS LABEL SECTION ---
-
-        # Initial status update handled after settings load in __init__
-        # These state updates MUST be called AFTER all relevant buttons are created in init_ui
-        self.update_exercise_buttons_state() # Will now correctly find buttons
-        self.update_navigation_buttons()     # Will now correctly find buttons
-        
-
-    def create_menu(self):
-            menubar = self.menuBar()
-
-            # File Menu
-            file_menu = menubar.addMenu("&File")
-            # Add 'Save Progress' action
-            save_progress_action = QAction("Save Progress", self)
-            save_progress_action.triggered.connect(self.save_user_progress)
-            file_menu.addAction(save_progress_action)
-            # Add 'Load Progress' action
-            load_progress_action = QAction("Load Progress", self)
-            load_progress_action.triggered.connect(self.load_user_progress)
-            file_menu.addAction(load_progress_action)
-            file_menu.addSeparator() # Separator for clarity
-            exit_action = QAction("&Exit", self)
-            exit_action.triggered.connect(self.close)
-            file_menu.addAction(exit_action)
-
-            # AI Menu
-            ai_menu = menubar.addMenu("&AI") # Use "&AI" for Alt+A shortcut
-            self.toggle_ai_action = QAction("AI Features: Enabled", self, checkable=True)
-            self.toggle_ai_action.setChecked(self.ai_enabled) # Set initial state
-            self.toggle_ai_action.triggered.connect(self.toggle_ai_features)
-            ai_menu.addAction(self.toggle_ai_action)
-
-            # New: AI Model Settings (under AI menu)
-            ai_model_settings_action = QAction("AI Model Settings...", self)
-            ai_model_settings_action.triggered.connect(self.show_ai_model_settings_dialog)
-            ai_menu.addAction(ai_model_settings_action)
+        # Toggle AI Features Action
+        self.toggle_ai_action = QAction("Enable AI Features", self)
+        self.toggle_ai_action.setCheckable(True)
+        self.toggle_ai_action.setChecked(self.ai_enabled) # Set initial state based on self.ai_enabled
+        self.toggle_ai_action.triggered.connect(self.toggle_ai_features)
+        settings_menu.addAction(self.toggle_ai_action)
 
 
-            # Settings Menu (NEW TOP-LEVEL MENU)
-            settings_menu = menubar.addMenu("&Settings") # This is the new top-level menu
+        # Help Menu
+        help_menu = menu_bar.addMenu("&Help")
+        about_action = QAction("&About", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
 
-            # Theme Submenu (within Settings)
-            themes_submenu = QMenu("Themes", self) # Create a QMenu for themes
-            dark_theme_action = QAction("Dark Theme", self)
-            dark_theme_action.triggered.connect(lambda: self.apply_theme('Dark'))
-            themes_submenu.addAction(dark_theme_action)
+    def load_lessons(self):
+        """
+        Loads lessons from lessons.json. If the file doesn't exist or is empty,
+        it attempts to generate initial lessons using the AI.
+        """
+        self.lessons_data = [] # Clear existing lessons
+        self.lesson_list_widget.clear() # Clear lesson list UI
 
-            light_theme_action = QAction("Light Theme", self)
-            light_theme_action.triggered.connect(lambda: self.apply_theme('Light'))
-            themes_submenu.addAction(light_theme_action)
-            # Add more theme actions here if you create more themes (e.g., 'Blue', 'Green')
+        if not os.path.exists(self.lessons_json_path) or os.stat(self.lessons_json_path).st_size == 0:
+            logging.info(f"'{self.lessons_json_path}' not found or is empty. Attempting to generate initial lessons.")
+            self.output_text_edit.append("AI: No lessons found. Attempting to generate initial lessons. This may take a moment...")
+            if QApplication.instance():
+                QApplication.instance().processEvents() # Update UI
 
-            settings_menu.addMenu(themes_submenu) # Add the themes submenu to the Settings menu
+            self.generate_initial_lessons_with_ai()
+        else:
+            try:
+                with open(self.lessons_json_path, 'r', encoding='utf-8') as f:
+                    self.lessons_data = json.load(f)
+                logging.info(f"Successfully loaded lessons from '{self.lessons_json_path}'.")
+                self.output_text_edit.append(f"Loaded {len(self.lessons_data)} lessons.")
+            except json.JSONDecodeError as e:
+                logging.error(f"Error decoding lessons.json: {e}", exc_info=True)
+                self.output_text_edit.append(f"Error loading lessons: {e}. Attempting to generate new lessons.")
+                self.generate_initial_lessons_with_ai() # Attempt generation if JSON is corrupt
+            except Exception as e:
+                logging.error(f"An unexpected error occurred while loading lessons: {e}", exc_info=True)
+                self.output_text_edit.append(f"An unexpected error occurred: {e}. Attempting to generate new lessons.")
+                self.generate_initial_lessons_with_ai()
 
-            # Font Size (directly under Settings)
-            font_size_action = QAction("Font Size...", self)
-            font_size_action.triggered.connect(self.show_font_size_dialog)
-            settings_menu.addAction(font_size_action)
-
-            # Help Menu
-            help_menu = menubar.addMenu("&Help")
-            about_action = QAction("&About", self)
-            about_action.triggered.connect(self.show_about_dialog) # Assuming you have this dialog
-            help_menu.addAction(about_action)
-        
-    def toggle_ai_features(self, checked):
-        """Toggles AI features on/off and updates status."""
-        self.ai_enabled = checked
-        self.save_settings() # Save the AI enabled state
-        self.update_ai_status_label() # Update UI elements based on new state
-        self.output_text_edit.append(f"\nAI features are now {'Enabled' if self.ai_enabled else 'Disabled'}.")
-        logging.info(f"AI features toggled to: {self.ai_enabled}")
-
+        self.update_lesson_list_widget()
+        if self.lessons_data:
+            self.load_lesson(0) # Load the first lesson by default
+        else:
+            self.lesson_content_text_edit.setPlainText("No lessons available. Please check AI settings or generate lessons.")
+            self.code_editor.setPlainText("")
+            self.output_text_edit.append("No lessons could be loaded or generated.")
 
     def generate_initial_lessons_with_ai(self):
-        """Generates initial lessons using the AI agent if lessons.json is not found."""
-        if not (self.ai_agent and self.ai_agent.api_status == "READY"): # Check ai_agent directly
-            logging.warning("AI Agent not ready for lesson generation.")
-            self.output_text_edit.append("\nAI Agent not ready. Cannot generate initial lessons.")
-            QMessageBox.warning(self, "AI Not Ready", "AI features are not ready to generate lessons. Ensure API key is set and internet connection is stable.")
-            return False
+        """
+        Generates initial Python lessons using the AI agent if no lessons are found.
+        Lessons are saved to lessons.json.
+        """
+        if not self.ai_enabled_globally or not self.ai_agent or self.ai_agent.api_status != "READY":
+            logging.warning("AI is not enabled or ready. Cannot generate initial lessons.")
+            self.output_text_edit.append("\nAI Error: AI is not ready. Cannot generate initial lessons. Please check API key and settings.")
+            return
+
+        self.output_text_edit.append("\nAI: Generating initial Python lessons. This might take a few minutes...")
+        if QApplication.instance():
+            QApplication.instance().processEvents()
 
         try:
-            logging.info("AI: Attempting to generate initial lesson content.")
-            initial_topics = [
-                {"title": "Introduction to Python: Hello World!", "id": "intro_to_python_hello_world"},
-                {"title": "Variables and Data Types", "id": "variables_data_types"},
-                {"title": "Control Structures: If Statements and Loops", "id": "control_structures"},
-                {"title": "Functions and Modules", "id": "functions_and_modules"},
-                {"title": "Data Structures: Lists, Tuples, and Dictionaries", "id": "data_structures"},
-                {"title": "File Handling in Python", "id": "file_handling"},
-                {"title": "Error Handling and Exceptions", "id": "error_handling"},
-                {"title": "Object-Oriented Programming Basics", "id": "oop_basics"}
-            ]
+            # Request initial lesson plan from AI
+            lesson_plan_prompt = (
+                "You are an expert Python instructor. "
+                "Generate a beginner-friendly Python lesson plan covering 5 core topics. "
+                "For each topic, suggest a title and 2-3 specific exercises that build on each other. "
+                "Each exercise should have a clear problem description, initial code (can be empty or a template), "
+                "and an expected output for a simple test case. "
+                "Focus on fundamental concepts suitable for someone just starting out, "
+                "like 'Variables', 'Data Types', 'Operators', 'Conditional Statements', 'Loops'."
+                "\n\nFormat the response as a JSON array of lesson objects. "
+                "Each lesson object should have 'title' and an 'exercises' array. "
+                "Each exercise object should have 'title', 'prompt', 'initial_code', and 'expected_output'."
+                "Ensure 'initial_code' is valid Python code (can be empty string)."
+                "The 'expected_output' should be the exact console output of a correct solution."
+                "\nExample structure: [{'title': 'Lesson 1', 'exercises': [{'title': 'Ex1', 'prompt': '...', 'initial_code': '...', 'expected_output': '...'}]}]"
+            )
+            lesson_plan_response = self.ai_agent.ask_general_question(lesson_plan_prompt)
 
-            generated_lessons_data = []
-
-            for i, topic in enumerate(initial_topics):
-                self.output_text_edit.append(f"\nAI: Generating lesson for '{topic['title']}'...")
-                if QApplication.instance():
-                    QApplication.instance().processEvents() 
-
-                ai_response_dict = self.ai_agent.generate_lesson_content(topic["title"])
-
-                # --- Input Validation for AI Response ---
-                if not isinstance(ai_response_dict, dict):
-                    logging.error(f"AI generation for '{topic['title']}' returned non-dict response: {ai_response_dict}")
-                    self.output_text_edit.append(f"AI Error: Invalid response format for '{topic['title']}'. Skipping.")
-                    continue
-                
-                if "error_message" in ai_response_dict:
-                    err_msg = ai_response_dict.get("error_message", "Unknown error")
-                    logging.error(f"AI generation failed for '{topic['title']}': {err_msg}")
-                    self.output_text_edit.append(f"AI Error: Failed to generate '{topic['title']}': {err_msg}. Skipping this lesson.")
-                    continue
-
-                if "lesson_content_markdown" not in ai_response_dict or "exercises" not in ai_response_dict:
-                    logging.error(f"AI response for '{topic['title']}' missing 'lesson_content_markdown' or 'exercises' keys. Response: {ai_response_dict}")
-                    self.output_text_edit.append(f"AI Error: Incomplete response for '{topic['title']}'. Skipping.")
-                    continue
-
-                lesson_content = ai_response_dict["lesson_content_markdown"]
-                exercises = ai_response_dict["exercises"]
-                
-                if not isinstance(lesson_content, str):
-                    logging.warning(f"AI returned non-string lesson_content_markdown for '{topic['title']}'. Converting to string.")
-                    lesson_content = str(lesson_content)
-
-                if not isinstance(exercises, list):
-                    logging.warning(f"AI returned non-list exercises for '{topic['title']}'. Skipping exercises for this lesson.")
-                    exercises = [] # Ensure it's an empty list if not a list
-                
-                logging.debug(f"DEBUG: After extracting exercises: Type={type(exercises)}, Length={len(exercises) if isinstance(exercises, list) else 'Not a list'}")
-                if isinstance(exercises, list):
-                    logging.debug(f"DEBUG: First few exercises (if any): {exercises[:2]}")
-
-                md_filename = f"{topic['id']}.md"
-                md_filepath = os.path.join(self.lessons_generated_dir, md_filename)
-                try:
-                    with open(md_filepath, 'w', encoding='utf-8') as f:
-                        f.write(lesson_content)
-                    logging.info(f"AI: Lesson content saved to {md_filepath}")
-                except IOError as e:
-                    logging.error(f"Could not write lesson file {md_filepath}: {e}")
-                    self.output_text_edit.append(f"Error: Could not save lesson file for '{topic['title']}'. Skipping.")
-                    continue # Skip to next topic if file cannot be saved
-
-                exercise_checks_for_json = []
-                logging.debug(f"DEBUG: Before exercise loop: exercise_checks_for_json length={len(exercise_checks_for_json)}")
-                
-                # Use 'exercises' directly as it's already type-checked to be a list
-                for j, exercise in enumerate(exercises):
-                    if not isinstance(exercise, dict):
-                        logging.warning(f"Skipping non-dict exercise item {j} in '{topic['title']}': {exercise}")
-                        continue # Skip to next exercise if it's not a dictionary
-
-                    logging.debug(f"DEBUG: Inside exercise loop, processing exercise {j}: Keys={exercise.keys()}")
-                    
-                    # Use str() conversion with .strip() for robustness
-                    check_func_str = str(exercise.get('check_function', '')).strip()
-                    initial_code_str = str(exercise.get('initial_code', '')).strip()
-                    prompt_str = str(exercise.get('prompt', 'No prompt provided.')).strip() # Explicitly convert to str
-                    
-                    if not check_func_str or "def check_result(" not in check_func_str:
-                        logging.warning(f"AI generated an invalid check_function for '{topic['title']}' exercise {j}. Using fallback checker.")
-                        check_func_str = (
-                            "def check_result(user_code, expected_output):\n"
-                            "    import io, sys\n"
-                            "    old_stdout = sys.stdout\n"
-                            "    redirected_output = io.StringIO()\n"
-                            "    sys.stdout = redirected_output\n"
-                            "    try:\n"
-                            "        exec_globals = {'__builtins__': __builtins__}\n"
-                            "        exec(user_code, exec_globals)\n"
-                            "        output = redirected_output.getvalue().strip()\n"
-                            "        \n"
-                            "        if output == expected_output.strip():\n"
-                            "            return {'passed': True, 'score': 1.0, 'message': 'Code passed basic output test.'}\n"
-                            "        else:\n"
-                            "            return {'passed': False, 'score': 0.5, 'message': f'Output mismatch. Expected: \"{expected_output.strip()}\", Got: \"{output}\".'}\n"
-                            "    except Exception as e:\n"
-                            "        return {'passed': False, 'score': 0.0, 'message': f'Code execution error: {e}'}\n"
-                            "    finally:\n"
-                            "        sys.stdout = old_stdout\n"
-                        )
-                    
-                    expected_output_val = exercise.get('expected_output')
-                    # This logic is already good, just ensuring it's kept as is.
-                    if expected_output_val is None:
-                        expected_output_string = ""
-                    else:
-                        expected_output_string = str(expected_output_val).strip()
-
-
-                    exercise_checks_for_json.append({
-                        "prompt": prompt_str, # Use the explicitly converted string
-                        "initial_code": initial_code_str,
-                        "check_function": check_func_str,
-                        "expected_output": expected_output_string
-                    })
-                logging.debug(f"DEBUG: After exercise loop: exercise_checks_for_json length={len(exercise_checks_for_json)}")
-
-                if not exercise_checks_for_json:
-                    logging.warning(f"No valid exercises processed for lesson '{topic['title']}'. Skipping this lesson entry.")
-                    self.output_text_edit.append(f"AI Warning: No valid exercises for '{topic['title']}'. Skipping lesson.")
-                    continue # Skip this lesson if no exercises were successfully processed
-
-                lesson_entry = {
-                    "id": topic["id"],
-                    "title": topic["title"],
-                    "content_file": os.path.join("lessons", "lessons_generated", md_filename).replace(os.sep, '/'),
-                    "exercises": exercise_checks_for_json,
-                    "solution_criteria": exercise_checks_for_json[0]['expected_output'] if exercise_checks_for_json else "No specific solution criteria defined."
-                }
-                generated_lessons_data.append(lesson_entry)
-                self.output_text_edit.append(f"AI: Successfully processed lesson '{topic['title']}'.")
-
-            # Save the master lessons.json only if some lessons were successfully generated
-            if generated_lessons_data:
-                with open(self.lessons_json_path, 'w', encoding='utf-8') as f:
-                    json.dump(generated_lessons_data, f, indent=4)
-                logging.info(f"AI: Generated lessons.json saved to {self.lessons_json_path}")
-                self.output_text_edit.append("\nAI: Initial lessons generation complete.")
-                self.load_lesson() # Refresh UI to show new lessons
-                return True
-            else:
-                logging.warning("No lessons were successfully generated by AI. lessons.json not created/updated.")
-                self.output_text_edit.append("\nAI: No lessons could be generated. Check AI response format and API status.")
-                QMessageBox.warning(self, "No Lessons Generated", "AI failed to generate any valid lessons. Check logs and API key.")
-                return False
-
-        except json.JSONDecodeError as e:
-            logging.error(f"AI: Failed to parse AI-generated JSON response for initial lessons: {e}", exc_info=True)
-            self.output_text_edit.append(f"<font color='red'>Error: Failed to parse AI-generated initial lesson data. {e}</font>")
-            QMessageBox.critical(self, "Lesson Generation Error", f"Failed to parse AI response: {e}")
-            return False
-        except Exception as e:
-            logging.error(f"AI: Unexpected error during initial lesson generation process: {e}", exc_info=True)
-            self.output_text_edit.append(f"<font color='red'>An unexpected error occurred during AI lesson generation: {e}</font>")
-            QMessageBox.critical(self, "Lesson Generation Error", f"An unexpected error occurred: {e}")
-            return False
-
-    def load_lesson(self, lesson_index=None):
-        """
-        If lesson_index is None: Loads all lessons from lessons.json into self.lessons_data,
-        populates the lesson list widget, and then displays the first lesson.
-        If lesson_index is provided: Displays the content of the specified lesson
-        from self.lessons_data.
-        """
-        if not self.lessons_data or lesson_index is None:
-            self.lesson_list_widget.clear()
-
-            lessons_file = self.lessons_json_path
             try:
-                with open(lessons_file, 'r', encoding='utf-8') as f:
-                    self.lessons_data = json.load(f)
-                logging.info(f"Loaded {len(self.lessons_data)} lessons from {lessons_file}.")
-                self.output_text_edit.append(f"Loaded {len(self.lessons_data)} lessons.")
+                raw_lessons = json.loads(lesson_plan_response)
+                generated_lessons_data = []
+                for lesson_idx, lesson_plan in enumerate(raw_lessons):
+                    lesson_title = lesson_plan.get('title', f"Lesson {lesson_idx + 1}")
+                    exercises_for_lesson = []
+                    for ex_idx, exercise_plan in enumerate(lesson_plan.get('exercises', [])):
+                        exercise_title = exercise_plan.get('title', f"Exercise {ex_idx + 1}")
+                        exercise_prompt = exercise_plan.get('prompt', 'No prompt provided.')
+                        initial_code = exercise_plan.get('initial_code', '# Write your code here')
+                        expected_output = exercise_plan.get('expected_output', '')
 
-                for idx, lesson in enumerate(self.lessons_data):
-                    item = QListWidgetItem(lesson.get('title', f"Lesson {idx + 1}"))
-                    self.lesson_list_widget.addItem(item)
+                        # Refine each exercise with a dedicated AI call for correctness and the checker function
+                        refinement_prompt = (
+                            f"You are a Python teaching assistant. "
+                            f"Given the following exercise details for '{lesson_title} - {exercise_title}':"
+                            f"\nPrompt: {exercise_prompt}"
+                            f"\nInitial Code: {initial_code}"
+                            f"\nExpected Output: {expected_output}"
+                            "\n\nRefine the 'initial_code' if necessary to be a good starting point. "
+                            "Crucially, provide a Python function `def check_result(user_code_str, expected_output_str):` "
+                            "that takes the user's code as a string and the expected output as a string. "
+                            "This function should execute the `user_code_str` in an isolated environment, "
+                            "capture its output, and compare it against `expected_output_str`. "
+                            "It should return a JSON string `{'is_correct': True/False, 'feedback': '...'}`."
+                            "If `user_code_str` generates an error, `is_correct` should be `False` and `feedback` should explain the error."
+                            "Ensure the `check_result` function is self-contained and does not rely on external variables beyond its parameters."
+                            "\n\nFormat your response as a JSON object with 'initial_code', 'check_function', 'refined_prompt', and 'expected_output' keys."
+                            "The 'check_function' value should be the full Python code of the `check_result` function as a string."
+                            "Example: {'initial_code': 'print(\"Hello\")', 'check_function': 'def check_result(...):\n    ...', 'refined_prompt': '...', 'expected_output': 'Hello'}"
+                        )
+                        refinement_response = self.ai_agent.ask_general_question(refinement_prompt)
 
-            except FileNotFoundError:
-                logging.warning(f"Lessons file not found at {lessons_file}. This might be expected if generating.")
-                self.lessons_data = []
-                self.output_text_edit.append("<font color='orange'>Warning: 'lessons.json' not found. Please ensure it exists or generate lessons.</font>")
-                self.lesson_content_text_edit.setMarkdown("<h2>No Lessons Available</h2><p>Please generate lessons or ensure 'lessons.json' exists.</p>")
-                self.code_editor.setPlainText("")
-                self.output_text_edit.append("")
-                self.current_lesson_index = -1
-                self.current_exercise_index = -1
-                self.update_navigation_buttons()
-                self.update_exercise_buttons_state()
-                return
+                        try:
+                            refined_data = json.loads(refinement_response)
+                            exercises_for_lesson.append({
+                                'title': exercise_plan['title'],
+                                'prompt': refined_data.get('refined_prompt', exercise_prompt), # Use refined prompt
+                                'initial_code': refined_data.get('initial_code', initial_code),
+                                'expected_output': refined_data.get('expected_output', expected_output),
+                                'check_function': refined_data.get('check_function', "") # Store the AI-generated checker
+                            })
+                            self.output_text_edit.append(f"AI: Generated exercise '{exercise_plan['title']}' for '{lesson_plan['title']}'.")
+                            if QApplication.instance():
+                                QApplication.instance().processEvents()
+                        except json.JSONDecodeError as e:
+                            logging.warning(f"Failed to decode AI refinement for exercise '{exercise_title}': {e}. Skipping this exercise.")
+                            self.output_text_edit.append(f"AI Warning: Failed to refine exercise '{exercise_title}'. Skipping.")
+                            continue # Skip this exercise if refinement fails
+                        except Exception as e:
+                            logging.error(f"Error refining exercise '{exercise_title}': {e}", exc_info=True)
+                            self.output_text_edit.append(f"AI Error: Problem refining exercise '{exercise_title}'. Skipping.")
+                            continue
+
+                    if exercises_for_lesson:
+                        generated_lessons_data.append({
+                            'title': lesson_title,
+                            'exercises': exercises_for_lesson
+                        })
+                
+                if generated_lessons_data:
+                    self.lessons_data = generated_lessons_data
+                    with open(self.lessons_json_path, 'w', encoding='utf-8') as f:
+                        json.dump(self.lessons_data, f, indent=4)
+                    logging.info(f"Successfully generated and saved {len(self.lessons_data)} lessons to '{self.lessons_json_path}'.")
+                    self.output_text_edit.append(f"\nAI: Successfully generated {len(self.lessons_data)} initial lessons!")
+                    self.update_lesson_list_widget()
+                    if self.lessons_data:
+                        self.load_lesson(0) # Load the first generated lesson
+                else:
+                    logging.warning("AI generated no valid lessons. lessons.json will remain empty or unchanged.")
+                    self.output_text_edit.append("\nAI: Could not generate any valid lessons. Please try again or check AI settings.")
+
             except json.JSONDecodeError as e:
-                logging.error(f"Error decoding lessons.json: {e}")
-                self.lessons_data = []
-                self.output_text_edit.append(f"<font color='red'>Error: Could not read lessons.json. Invalid format: {e}</font>")
-                self.lesson_content_text_edit.setMarkdown("<h2>Error Loading Lessons</h2><p>Invalid JSON format. Check 'lessons.json'.</p>")
-                self.code_editor.setPlainText("")
-                self.output_text_edit.append("")
-                self.current_lesson_index = -1
-                self.current_exercise_index = -1
-                self.update_navigation_buttons()
-                self.update_exercise_buttons_state()
-                return
-            except Exception as e:
-                logging.error(f"An unexpected error occurred while loading lessons: {e}")
-                self.lessons_data = []
-                self.output_text_edit.append(f"<font color='red'>Error: An unexpected error occurred while loading lessons: {e}</font>")
-                self.lesson_content_text_edit.setMarkdown("<h2>Error Loading Lessons</h2><p>An unexpected error occurred.</p>")
-                self.code_editor.setPlainText("")
-                self.output_text_edit.append("")
-                self.current_lesson_index = -1
-                self.current_exercise_index = -1
-                self.update_navigation_buttons()
-                self.update_exercise_buttons_state()
-                return
-            
-            if lesson_index is None and self.lessons_data:
-                lesson_index = 0
+                logging.error(f"Failed to decode initial lesson plan from AI: {e}. Raw response: {lesson_plan_response}", exc_info=True)
+                self.output_text_edit.append(f"\nAI Error: Failed to generate lesson plan: Invalid JSON response. {e}")
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during initial lesson generation: {e}", exc_info=True)
+            self.output_text_edit.append(f"\nAI Error: An unexpected error occurred during lesson generation: {e}")
 
-        if not self.lessons_data or not (0 <= lesson_index < len(self.lessons_data)):
-            logging.debug(f"No lessons data or invalid index ({lesson_index}). Not attempting to display lesson content.")
-            self.lesson_content_text_edit.setMarkdown("<h2>No Lesson Selected</h2><p>Select a lesson from the list, or generate new ones.</p>")
+    def load_lesson(self, index):
+        """
+        Loads and displays the lesson content and the first exercise for the given index.
+        """
+        if not self.lessons_data:
+            self.lesson_content_text_edit.setPlainText("No lessons loaded.")
             self.code_editor.setPlainText("")
-            # self.exercise_prompt_label.setText("") # Assuming you have this label
             self.current_lesson_index = -1
             self.current_exercise_index = -1
             self.update_navigation_buttons()
             self.update_exercise_buttons_state()
             return
 
-        self.current_lesson_index = lesson_index
-        lesson = self.lessons_data[self.current_lesson_index]
+        if 0 <= index < len(self.lessons_data):
+            self.current_lesson_index = index
+            lesson = self.lessons_data[self.current_lesson_index]
 
-        self.lesson_content_text_edit.clear()
-        self.lesson_content_text_edit.setMarkdown(f"<h1>{lesson.get('title', 'Untitled Lesson')}</h1>\n"
-                                                 f"<h3>{lesson.get('main_concept', 'No main concept provided.')}</h3>\n")
-        
-        content_file_path = os.path.join(os.path.dirname(__file__), lesson['content_file'])
-        try:
-            with open(content_file_path, "r", encoding="utf-8") as f:
-                md_content = f.read()
-            self.lesson_content_text_edit.append(md_content)
-        except FileNotFoundError:
-            logging.error(f"Lesson content markdown file not found: {content_file_path}")
-            self.lesson_content_text_edit.append(f"<p><font color='red'>Error: Lesson content file not found at `{content_file_path}`.</font></p>")
-        except Exception as e:
-            logging.error(f"Error reading lesson content markdown: {e}")
-            self.lesson_content_text_edit.append(f"<p><font color='red'>Error reading lesson content: {e}</font></p>")
+            # Display lesson title and exercises in lesson_content_text_edit
+            lesson_title = lesson.get('title', f"Lesson {index + 1}")
+            content_display = f"# {lesson_title}\n\n"
+            content_display += "## Exercises:\n"
+            for i, exercise in enumerate(lesson.get('exercises', [])):
+                content_display += f"- {i+1}. {exercise.get('title', f'Exercise {i+1}')}\n"
+            self.lesson_content_text_edit.setMarkdown(content_display) # Use Markdown for formatting
 
-        self.setWindowTitle(f"Python Learning Tool - {lesson.get('title', 'Untitled Lesson')}")
-        self.output_text_edit.clear()
+            self.output_text_edit.clear() # Clear output for new lesson
 
-        if self.lesson_list_widget.currentRow() != self.current_lesson_index:
+            # Automatically load the first exercise
+            if lesson.get('exercises'):
+                self.display_exercise(0) # Display the first exercise
+            else:
+                self.output_text_edit.append("No exercises for this lesson.")
+                self.code_editor.setPlainText("")
+                self.current_exercise_index = -1
+
+            # Update lesson list selection
             self.lesson_list_widget.setCurrentRow(self.current_lesson_index)
-
-        exercises = lesson.get('exercises', [])
-        if exercises:
-            self.display_exercise(0)
+            logging.info(f"Loaded lesson: {lesson_title}")
         else:
-            self.output_text_edit.append("\nNo exercises for this lesson.")
-            # self.exercise_prompt_label.setText("No exercises for this lesson.") # Assuming you have this label
-            self.code_editor.setPlainText("")
-            self.current_exercise_index = -1
-            
+            logging.warning(f"Attempted to load invalid lesson index: {index}")
+            self.output_text_edit.append(f"Error: Invalid lesson index {index}.")
+
         self.update_navigation_buttons()
         self.update_exercise_buttons_state()
 
-    def lesson_list_item_clicked(self, item):
+
+    def on_lesson_selected(self, item):
+        """Handles selection of a lesson from the QListWidget."""
         index = self.lesson_list_widget.row(item)
         self.load_lesson(index)
 
-    def display_exercise(self, exercise_index):
-        """Displays the content of a specific exercise within the current lesson."""
+    def display_exercise(self, index):
+        """Displays the prompt and initial code for a specific exercise."""
         if self.current_lesson_index == -1 or not self.lessons_data:
-            # self.exercise_prompt_label.setText("No lesson selected to display exercises.") # Assuming this label exists
-            self.code_editor.setPlainText("")
             return
 
         lesson = self.lessons_data[self.current_lesson_index]
         exercises = lesson.get('exercises', [])
 
-        if not exercises or not (0 <= exercise_index < len(exercises)):
-            logging.warning(f"Cannot display exercise: Invalid exercise index {exercise_index} for lesson {self.current_lesson_index}.")
-            # self.exercise_prompt_label.setText("No valid exercise to display for this lesson.")
-            self.code_editor.setPlainText("")
-            self.current_exercise_index = -1
-            return
+        if 0 <= index < len(exercises):
+            self.current_exercise_index = index
+            exercise = exercises[self.current_exercise_index]
 
-        self.current_exercise_index = exercise_index
-        exercise = exercises[self.current_exercise_index]
-
-        # Ensure you have a QLabel named self.exercise_prompt_label in your init_ui
-        # If not, you might need to append to output_text_edit or use a different widget.
-        # self.exercise_prompt_label.setText(exercise.get('prompt', 'No exercise prompt provided.')) 
-        self.code_editor.setPlainText(exercise.get('initial_code', '# Write your code here.'))
-        self.current_exercise_solution_criteria = exercise.get('expected_output', '')
-        self.current_exercise_check_function = exercise.get('check_function', '')
-
-        self.output_text_edit.append(f"\n--- Exercise {self.current_exercise_index + 1} of {len(exercises)} ---\n")
-        self.output_text_edit.append(exercise.get('prompt', ''))
-        self.output_text_edit.append("\n-----------------------------------\n")
+            self.lesson_content_text_edit.setMarkdown(
+                f"# {lesson.get('title', 'Lesson')}\n\n"
+                f"## Exercise {index + 1}: {exercise.get('title', 'Untitled Exercise')}\n\n"
+                f"{exercise.get('prompt', 'No prompt provided.')}"
+            )
+            self.code_editor.setPlainText(exercise.get('initial_code', '# Write your code here'))
+            self.output_text_edit.clear()
+            self.output_text_edit.append(f"--- Exercise {index + 1} Loaded ---")
+            logging.info(f"Displayed exercise {index + 1} for lesson {self.current_lesson_index + 1}.")
+            # Reset attempts for new exercise
+            self.exercise_attempts[(self.current_lesson_index, self.current_exercise_index)] = 0
+        else:
+            self.output_text_edit.append("All exercises for this lesson completed!")
+            self.code_editor.setPlainText("# Lesson Completed!")
+            self.current_exercise_index = -1 # Indicate no active exercise
+            if hasattr(self, 'check_answer_button'):
+                self.check_answer_button.setEnabled(False)
 
         self.update_exercise_buttons_state()
 
-    def check_answer_with_ai(self, user_code: str):
+    def check_answer_with_ai(self):
         """
-        Executes the user's code, captures its output and state, and then
-        passes these results to the AI-generated check function for evaluation.
+        Submits user's code to the AI for checking against an expected output
+        or an AI-generated check function.
         """
         if not self.ai_enabled or not self.ai_agent or self.ai_agent.api_status != "READY":
-            self.output_text_edit.append("\nAI features are currently disabled. Cannot check answer with AI.")
+            self.output_text_edit.append("\nAI features are currently disabled or not ready. Cannot check answer.")
+            return
+        if self.current_lesson_index == -1 or self.current_exercise_index == -1:
+            self.output_text_edit.append("\nNo active exercise to check.")
             return
 
-        if not self.lessons_data or self.current_lesson_index == -1:
-            self.output_text_edit.append("\nNo lesson selected to check the answer against.")
-            return
-
-        current_lesson_data = self.lessons_data[self.current_lesson_index]
-        exercises = current_lesson_data.get('exercises', [])
-
-        if not exercises:
-            self.output_text_edit.append("\nNo exercises defined for this lesson to check.")
-            return
-
-        # CRITICAL FIX: Use self.current_exercise_index to select the correct exercise
-        if not (0 <= self.current_exercise_index < len(exercises)):
-            self.output_text_edit.append(f"\nError: No current exercise selected or invalid index {self.current_exercise_index}.")
-            return
-            
-        current_exercise = exercises[self.current_exercise_index]
-        check_function_str = current_exercise.get('check_function', '').strip()
-        expected_output = current_exercise.get('expected_output', '').strip()
-        problem_description = current_exercise.get('prompt', 'No problem description provided.')
-
-        if not check_function_str:
-            self.output_text_edit.append("\nError: No automated check function available for this exercise.")
-            self.output_text_edit.append("\nRequesting AI feedback instead...")
-            self.get_ai_feedback_on_code(user_code, problem_description, expected_output)
-            return
-
-        self.output_text_edit.append("\n--- Checking Answer with Automated Function ---")
-        self.output_text_edit.append("Running your code through the automated checker...\n")
+        lesson = self.lessons_data[self.current_lesson_index]
+        exercise = lesson.get('exercises', [])[self.current_exercise_index]
         
-        # --- PHASE 1: Execute User's Code in a Controlled Environment ---
-        user_output_buffer = io.StringIO()
-        user_exec_globals = {'__builtins__': builtins} 
-        user_exec_locals = {} 
+        user_code = self.code_editor.toPlainText()
+        problem_description = exercise.get('prompt', 'N/A')
+        expected_output = exercise.get('expected_output', '')
+        ai_check_function_str = exercise.get('check_function', "")
 
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        sys.stdout = user_output_buffer
-        sys.stderr = user_output_buffer 
+        self.output_text_edit.append("\nAI: Checking your answer... Please wait.")
+        if QApplication.instance():
+            QApplication.instance().processEvents()
 
-        user_code_execution_error = None
+        # Increment attempt counter
+        current_attempts = self.exercise_attempts.get((self.current_lesson_index, self.current_exercise_index), 0)
+        self.exercise_attempts[(self.current_lesson_index, self.current_exercise_index)] = current_attempts + 1
+
         try:
-            exec(user_code, user_exec_globals, user_exec_locals)
-        except Exception as e:
-            user_code_execution_error = e
-            self.output_text_edit.append(f"User Code Execution Error: {e}\n")
-            self.output_text_edit.append(user_output_buffer.getvalue().strip())
-            self.output_text_edit.append(f"\nTraceback:\n{traceback.format_exc()}")
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-        
-        captured_user_output = user_output_buffer.getvalue().strip()
-        
-        # --- PHASE 2: Execute AI-Generated Check Function ---
-        result = {'passed': False, 'score': 0.0, 'message': 'User code failed to execute, cannot check.'}
-        if user_code_execution_error:
-            result['message'] = f"User code execution failed: {user_code_execution_error}. Output: '{captured_user_output}'"
-        else:
-            checker_globals = {
-                '__builtins__': builtins, 
-                'io': io,
-                'sys': sys,
-                'math': __import__('math'),
-                'random': __import__('random'),
-                'traceback': traceback,
-            }
-            
-            check_output_buffer = io.StringIO()
-            sys.stdout = check_output_buffer
-            sys.stderr = check_output_buffer
+            feedback_response = None
+            if ai_check_function_str and "def check_result(" in ai_check_function_str:
+                # Attempt to use the AI-generated checker function
+                try:
+                    # Create a new, isolated global dictionary for the checker function
+                    checker_globals = {}
+                    exec(ai_check_function_str, checker_globals)
+                    check_result_func = checker_globals.get("check_result")
 
-            try:
-                exec(check_function_str, checker_globals) 
+                    if check_result_func:
+                        # The check_result function should execute user_code_str internally
+                        # and compare it to expected_output_str
+                        check_output = check_result_func(user_code, expected_output)
+                        
+                        # Assuming check_output is a JSON string like '{"is_correct": true, "feedback": "..."}'
+                        check_output_dict = json.loads(check_output)
+                        is_correct = check_output_dict.get('is_correct', False)
+                        feedback = check_output_dict.get('feedback', 'No specific feedback from checker.')
 
-                check_result_func = checker_globals.get('check_result')
-
-                if not check_result_func or not callable(check_result_func):
-                    raise ValueError("AI-generated check function did not define a callable 'check_result'.")
-                
-                result = check_result_func(user_code, expected_output)
-
-                if not isinstance(result, dict) or 'passed' not in result or 'score' not in result or 'message' not in result:
-                    raise ValueError(f"Automated check function returned invalid format. Got: {result}")
-                
-            except Exception as e:
-                error_output = check_output_buffer.getvalue()
-                logging.error(f"Error during AI-generated check function execution: {e}\n{traceback.format_exc()}", exc_info=True)
-                result = {'passed': False, 'score': 0.0, 'message': f"An error occurred while running the automated checker: {e}. Checker output: {error_output.strip()}"}
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-                if check_output_buffer.getvalue().strip():
-                    self.output_text_edit.append(f"\nChecker's internal output:\n{check_output_buffer.getvalue().strip()}")
-
-        # --- PHASE 3: Display Results and Request AI Feedback ---
-        self.update_score_label(f"Score: {result['score']:.2f}")
-        self.output_text_edit.append(f"\nAI Check Result: {result['message']}")
-        
-        if result['passed']:
-            self.output_text_edit.append("\nCorrect! Moving to next exercise.")
-            self.current_exercise_index += 1
-            lesson_id = current_lesson_data.get('id', f"lesson_{self.current_lesson_index}")
-            completed_exercise_key = f"{lesson_id}-{self.current_exercise_index - 1}"
-            self.exercise_attempts[completed_exercise_key] = 0 
-
-            self.ai_agent.learn_from_experience(True, user_code, completed_exercise_key, "")
-
-            if self.current_exercise_index < len(exercises):
-                self.display_exercise(self.current_exercise_index)
+                        if is_correct:
+                            self.output_text_edit.append("\n--- Automated Check Result ---\n✅ Correct! " + feedback)
+                            self.output_text_edit.append("Moving to the next exercise...")
+                            self.next_exercise() # Automatically move to next exercise on success
+                            return # Exit after successful check
+                        else:
+                            self.output_text_edit.append("\n--- Automated Check Result ---\n❌ Incorrect. " + feedback)
+                            # Provide AI feedback based on the incorrect attempt
+                            previous_errors = feedback # Use the checker's feedback as previous errors
+                            feedback_response = self.ai_agent.provide_feedback_on_code(
+                                user_code=user_code,
+                                problem_description=problem_description,
+                                expected_output=expected_output,
+                                previous_errors=previous_errors,
+                                num_attempts=self.exercise_attempts[(self.current_lesson_index, self.current_exercise_index)]
+                            )
+                    else:
+                        raise ValueError("AI check function 'check_result' not found after execution.")
+                except Exception as e:
+                    logging.warning(f"Error executing AI-generated check function: {e}. Falling back to general AI feedback.", exc_info=True)
+                    self.output_text_edit.append(f"\nAI: Error with automated checker ({e}). Falling back to general AI feedback.")
+                    # Fallback to general AI feedback if checker fails
+                    previous_errors = f"Automated checker failed with error: {e}"
+                    feedback_response = self.ai_agent.provide_feedback_on_code(
+                        user_code=user_code,
+                        problem_description=problem_description,
+                        expected_output=expected_output,
+                        previous_errors=previous_errors,
+                        num_attempts=self.exercise_attempts[(self.current_lesson_index, self.current_exercise_index)]
+                    )
             else:
-                self.output_text_edit.append("Congratulations! You've completed all exercises for this lesson.")
-                self.code_editor.setPlainText("")
-                # self.exercise_prompt_label.setText("Lesson completed!")
-                self.update_navigation_buttons()
-                self.update_exercise_buttons_state()
-        else:
-            self.output_text_edit.append("\nIncorrect. Please try again.")
-            lesson_id = current_lesson_data.get('id', f"lesson_{self.current_lesson_index}")
-            exercise_id = self.current_exercise_index
-            full_exercise_key = f"{lesson_id}-{exercise_id}"
-            self.exercise_attempts[full_exercise_key] = self.exercise_attempts.get(full_exercise_key, 0) + 1
-            num_attempts = self.exercise_attempts[full_exercise_key]
+                logging.info("No AI-generated check function available. Requesting general AI feedback.")
+                self.output_text_edit.append("\nAI: No specific automated check available for this exercise. Requesting general feedback.")
+                # Fallback to general AI feedback if no checker is present
+                feedback_response = self.ai_agent.provide_feedback_on_code(
+                    user_code=user_code,
+                    problem_description=problem_description,
+                    expected_output=expected_output,
+                    previous_errors="No automated check was available, providing general guidance.",
+                    num_attempts=self.exercise_attempts[(self.current_lesson_index, self.current_exercise_index)]
+                )
+            
+            if feedback_response:
+                self.output_text_edit.append(f"\n--- AI Feedback ---\n{feedback_response}")
 
-            feedback_message = self.ai_agent.provide_feedback_on_code(
-                user_code=user_code,
-                problem_description=problem_description,
-                expected_output=expected_output,
-                previous_errors=result['message'],
-                num_attempts=num_attempts
-            )
-            self.output_text_edit.append(f"\n--- Agent Feedback ---\n{feedback_message}")
-            self.ai_agent.learn_from_experience(False, user_code, full_exercise_key, feedback_message)
-
-        self.update_exercise_buttons_state()
-        self.update_navigation_buttons()
-
+        except Exception as e:
+            logging.error(f"Error getting AI feedback: {e}", exc_info=True)
+            self.output_text_edit.append(f"\nAI Error: Failed to get feedback: {e}")
 
     def get_ai_feedback_on_code(self, user_code: str, problem_description: str, expected_output: str):
         """
@@ -855,7 +572,7 @@ class PythonLearningTool(QMainWindow):
                 problem_description=problem_description,
                 expected_output=expected_output,
                 previous_errors="No automated check was available, providing general guidance.",
-                num_attempts=1
+                num_attempts=1 # This is for general feedback, so num_attempts isn't critical but good to pass something
             )
             self.output_text_edit.append(f"\n--- AI General Feedback ---\n{feedback}")
         except Exception as e:
@@ -867,8 +584,9 @@ class PythonLearningTool(QMainWindow):
         Updates the exercise prompt and code editor based on the current_exercise_index.
         This method is called after successfully completing an exercise or moving between them.
         """
+        # This method now primarily serves as a wrapper to call display_exercise
+        # or handle the "all exercises completed" case.
         if self.current_lesson_index == -1 or not self.lessons_data:
-            # self.exercise_prompt_label.setText("No lesson selected.")
             self.code_editor.setPlainText("")
             return
 
@@ -876,7 +594,6 @@ class PythonLearningTool(QMainWindow):
         exercises = lesson.get('exercises', [])
 
         if not exercises:
-            # self.exercise_prompt_label.setText("No exercises for this lesson.")
             self.code_editor.setPlainText("")
             return
 
@@ -884,18 +601,16 @@ class PythonLearningTool(QMainWindow):
             self.display_exercise(self.current_exercise_index)
         else:
             self.output_text_edit.append("All exercises for this lesson completed!")
-            # self.exercise_prompt_label.setText("All exercises for this lesson completed!")
             self.code_editor.setPlainText("# Lesson Completed!")
-            if hasattr(self, 'check_answer_button'): # Check if button exists before disabling
-                self.check_answer_button.setEnabled(False)
+            if hasattr(self, 'check_answer_button'):
+                self.check_answer_button.setEnabled(False) # Disable check button when lesson is completed
 
         self.update_exercise_buttons_state()
 
-    # --- REMAINING PLACEHOLDER METHODS (ensure these are present in your class) ---
 
     def update_navigation_buttons(self):
-        # Logic to enable/disable prev/next lesson buttons
-        if hasattr(self, 'prev_lesson_button') and hasattr(self, 'next_lesson_button'): # Check if buttons exist
+        """Logic to enable/disable previous/next lesson buttons."""
+        if hasattr(self, 'prev_lesson_button') and hasattr(self, 'next_lesson_button'):
             if not self.lessons_data:
                 self.prev_lesson_button.setEnabled(False)
                 self.next_lesson_button.setEnabled(False)
@@ -906,12 +621,13 @@ class PythonLearningTool(QMainWindow):
             logging.debug("Lesson navigation buttons not initialized.")
 
     def update_exercise_buttons_state(self):
-        # Logic to enable/disable prev/next exercise buttons and check answer button
+        """Logic to enable/disable prev/next exercise buttons and check answer button."""
         if hasattr(self, 'prev_exercise_button') and hasattr(self, 'next_exercise_button') and hasattr(self, 'check_answer_button'):
             if self.current_lesson_index == -1 or not self.lessons_data:
                 self.prev_exercise_button.setEnabled(False)
                 self.next_exercise_button.setEnabled(False)
                 self.check_answer_button.setEnabled(False)
+                self.run_code_button.setEnabled(False) # Disable run code if no active lesson/exercise
                 return
 
             current_lesson = self.lessons_data[self.current_lesson_index]
@@ -921,14 +637,18 @@ class PythonLearningTool(QMainWindow):
                 self.prev_exercise_button.setEnabled(False)
                 self.next_exercise_button.setEnabled(False)
                 self.check_answer_button.setEnabled(False)
+                self.run_code_button.setEnabled(False)
             else:
                 self.prev_exercise_button.setEnabled(self.current_exercise_index > 0)
                 self.next_exercise_button.setEnabled(self.current_exercise_index < len(exercises) - 1)
-                self.check_answer_button.setEnabled(True) # Enable check button if there's an active exercise
+                # Enable check button only if AI is enabled and there's an active exercise
+                self.check_answer_button.setEnabled(self.ai_enabled and self.ai_enabled_globally and self.ai_agent and self.ai_agent.api_status == "READY")
+                self.run_code_button.setEnabled(True) # Always allow running code if exercise is active
         else:
             logging.debug("Exercise navigation or check buttons not initialized.")
 
     def next_exercise(self):
+        """Moves to the next exercise in the current lesson."""
         if self.current_lesson_index != -1 and self.lessons_data:
             lesson = self.lessons_data[self.current_lesson_index]
             exercises = lesson.get('exercises', [])
@@ -938,6 +658,7 @@ class PythonLearningTool(QMainWindow):
                 self.output_text_edit.append("Already on the last exercise of this lesson.")
 
     def prev_exercise(self):
+        """Moves to the previous exercise in the current lesson."""
         if self.current_lesson_index != -1 and self.lessons_data:
             if self.current_exercise_index > 0:
                 self.display_exercise(self.current_exercise_index - 1)
@@ -945,27 +666,49 @@ class PythonLearningTool(QMainWindow):
                 self.output_text_edit.append("Already on the first exercise of this lesson.")
 
     def next_lesson(self):
+        """Moves to the next lesson."""
         if self.lessons_data and self.current_lesson_index < len(self.lessons_data) - 1:
             self.load_lesson(self.current_lesson_index + 1)
         else:
             self.output_text_edit.append("Already on the last lesson.")
 
     def prev_lesson(self):
+        """Moves to the previous lesson."""
         if self.current_lesson_index > 0:
             self.load_lesson(self.current_lesson_index - 1)
         else:
             self.output_text_edit.append("Already on the first lesson.")
 
     def update_score_label(self, text):
+        """Updates the score display in the status bar."""
         self.score_label.setText(text)
 
     def update_lesson_list_widget(self):
-        pass
-    
+        """
+        Updates the lesson list widget with current lessons.
+        Called after loading or generating lessons.
+        """
+        self.lesson_list_widget.clear()
+        for i, lesson in enumerate(self.lessons_data):
+            self.lesson_list_widget.addItem(lesson.get('title', f"Lesson {i+1}"))
+        if 0 <= self.current_lesson_index < len(self.lessons_data):
+            self.lesson_list_widget.setCurrentRow(self.current_lesson_index)
+
+
     def apply_syntax_highlighting(self):
+        """
+        Applies syntax highlighting to the code editor.
+        (Placeholder - implementation requires a QSyntaxHighlighter subclass)
+        """
+        # A custom QSyntaxHighlighter class would be instantiated here
+        # self.highlighter = PythonHighlighter(self.code_editor.document())
         pass
 
     def run_user_code(self):
+        """
+        Executes the user's code from the code editor in an isolated environment
+        and displays its output.
+        """
         self.output_text_edit.append("\n--- Running User Code ---")
         user_code = self.code_editor.toPlainText()
         output_buffer = io.StringIO()
@@ -974,18 +717,31 @@ class PythonLearningTool(QMainWindow):
         sys.stdout = output_buffer
         sys.stderr = output_buffer
 
+        # Create a dictionary for the execution environment
+        # Only allow a minimal set of builtins for safety
+        safe_builtins = {name: getattr(builtins, name) for name in dir(builtins) if not name.startswith('__') and name not in ['open', 'eval', 'exec']}
+        user_globals = {"__builtins__": safe_builtins}
+        user_locals = {}
+
         try:
-            exec(user_code, {'__builtins__': builtins})
+            # Execute the user code
+            exec(user_code, user_globals, user_locals)
         except Exception as e:
             self.output_text_edit.append(f"Execution Error: {e}")
             self.output_text_edit.append(f"\nTraceback:\n{traceback.format_exc()}")
         finally:
+            # Restore stdout/stderr
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+            # Display captured output
             self.output_text_edit.append(f"\nOutput:\n{output_buffer.getvalue().strip()}")
             self.output_text_edit.append("\n--------------------------")
 
     def ask_ai_general_help(self):
+        """
+        Sends a general question from the user to the AI agent and displays the response.
+        Provides context from the current lesson/exercise.
+        """
         if not self.ai_enabled or not self.ai_agent or self.ai_agent.api_status != "READY":
             self.output_text_edit.append("\nAI features are currently disabled. Cannot ask for help.")
             return
@@ -1023,73 +779,127 @@ class PythonLearningTool(QMainWindow):
             logging.error(f"Error asking AI general help: {e}", exc_info=True)
             self.output_text_edit.append(f"\nAI Error: Failed to get general help: {e}")
 
-
     def load_settings(self):
-        # QSettings automatically handles existence, provides defaults
-        self.ai_enabled = self.settings.value('ai_enabled', True, type=bool)
-        self.api_key_set = self.settings.value('api_key_set', False, type=bool)
-        self.current_theme = self.settings.value('theme', 'Dark', type=str)
-        self.code_font_size = self.settings.value('font_size', 10, type=int)
-        self.ai_model_name = self.settings.value('ai_model', 'gemini-pro', type=str)
-        self.max_ai_tokens = self.settings.value('max_ai_tokens', 1000, type=int)
+        """
+        Loads UI and AI preferences from QSettings.
+        Initializes the AI agent if an API key is found.
+        """
+        self.current_theme = self.settings.value("current_theme", "Dark", str)
+        self.code_font_size = self.settings.value("code_font_size", 10, int)
+        self.ai_enabled = self.settings.value("ai_enabled", True, bool) # User toggle for AI features
+        self.ai_model_name = self.settings.value("ai_model_name", "gemini-1.5-flash", str)
+        self.max_ai_tokens = self.settings.value("max_ai_tokens", 1000, int)
+
+        # Load API key from QSettings first
+        loaded_api_key = self.settings.value("google_api_key", "", str)
+
+        # If no key found in QSettings, try to load from the GOOGLE_API_KEY environment variable (e.g., from .env file)
+        if not loaded_api_key:
+            loaded_api_key = os.environ.get("GOOGLE_API_KEY", "")
+
+        self.google_api_key = loaded_api_key # Store the determined key in the instance attribute
 
         logging.info("Settings loaded via QSettings.")
-
-        # Apply loaded settings immediately
         self.apply_theme(self.current_theme)
         self.apply_font_size(self.code_font_size)
 
-        # Update the AI agent's model and tokens if the agent exists
-        if self.ai_agent:
-            self.ai_agent.update_model(self.ai_model_name)
-            self.ai_agent.update_max_tokens(self.max_ai_tokens)
-            
+        # Initialize AI agent if a key was found (either from QSettings or .env)
+        if self.google_api_key:
+            logging.info("Attempting to initialize AI agent.")
+            self.initialize_ai_agent(self.google_api_key) # Call the helper method to initialize AI
+        else:
+            logging.warning("No Google API Key found in settings or environment. AI features will be globally disabled.")
+            self.ai_enabled_globally = False # Ensure AI is globally disabled if no key
+            self.ai_agent = None # Make sure agent is None if no key
+
+        # Set the initial checked state of the menu action
+        self.toggle_ai_action.setChecked(self.ai_enabled)
+        # Disable the toggle if AI is globally disabled (no key)
+        self.toggle_ai_action.setEnabled(self.ai_enabled_globally)
+        self.ask_ai_general_help_button.setEnabled(self.ai_enabled and self.ai_enabled_globally)
+        self.check_answer_button.setEnabled(self.ai_enabled and self.ai_enabled_globally)
+
+        self.update_ai_status_label() # Update AI status based on initial load
+
+    def initialize_ai_agent(self, api_key: str):
+        """Initializes the AI agent with the given API key and configured model/tokens."""
+        if api_key:
+            try:
+                self.ai_agent = SelfImprovingAgent(api_key=api_key, model_name=self.ai_model_name, max_tokens=self.max_ai_tokens)
+                # Perform a quick test call to verify API status (optional but good)
+                # For simplicity, we'll just assume READY if instantiation succeeds
+                self.ai_enabled_globally = True
+                logging.info("AI agent initialized successfully.")
+            except Exception as e:
+                logging.error(f"Failed to initialize AI agent: {e}", exc_info=True)
+                self.output_text_edit.append(f"\nAI Initialization Error: {e}")
+                self.ai_enabled_globally = False
+                self.ai_agent = None
+        else:
+            self.ai_enabled_globally = False
+            self.ai_agent = None
+        self.update_ai_status_label()
+
     def save_settings(self):
+        """Saves current UI and AI preferences to QSettings."""
         self.settings.setValue('ai_enabled', self.ai_enabled)
-        self.settings.setValue('api_key_set', self.api_key_set)
-        self.settings.setValue('theme', self.current_theme)
-        self.settings.setValue('font_size', self.code_font_size)
-        self.settings.setValue('ai_model', self.ai_model_name)
+        self.settings.setValue('google_api_key', self.google_api_key) # Save the API key
+        self.settings.setValue('current_theme', self.current_theme)
+        self.settings.setValue('code_font_size', self.code_font_size)
+        self.settings.setValue('ai_model_name', self.ai_model_name)
         self.settings.setValue('max_ai_tokens', self.max_ai_tokens)
 
-        # QSettings automatically saves changes, but a sync can force it
-        self.settings.sync()
+        self.settings.sync() # Forces changes to be written to permanent storage
         logging.info("Settings saved via QSettings.")
 
     def update_ai_status_label(self):
+        """Updates the AI status label in the status bar."""
         if self.ai_enabled_globally:
             if self.ai_enabled and self.ai_agent and self.ai_agent.api_status == "READY":
                 self.ai_status_label.setText("AI Status: <font color='green'>Ready</font>")
+                self.ask_ai_general_help_button.setEnabled(True)
+                # Enable check_answer_button only if AI is ready and an exercise is active
+                if self.current_exercise_index != -1 and self.current_lesson_index != -1:
+                    self.check_answer_button.setEnabled(True)
             elif self.ai_enabled and self.ai_agent and self.ai_agent.api_status != "READY":
-                 self.ai_status_label.setText(f"AI Status: <font color='orange'>Not Ready ({self.ai_agent.api_status})</font>")
+                self.ai_status_label.setText(f"AI Status: <font color='orange'>Not Ready ({self.ai_agent.api_status})</font>")
+                self.ask_ai_general_help_button.setEnabled(False)
+                self.check_answer_button.setEnabled(False)
             elif not self.ai_enabled:
                 self.ai_status_label.setText("AI Status: <font color='red'>Disabled (User)</font>")
+                self.ask_ai_general_help_button.setEnabled(False)
+                self.check_answer_button.setEnabled(False)
         else:
             self.ai_status_label.setText("AI Status: <font color='red'>Globally Disabled (No API Key/Error)</font>")
+            self.ask_ai_general_help_button.setEnabled(False)
+            self.check_answer_button.setEnabled(False)
+        # Ensure the toggle action reflects whether it's enabled or not
+        self.toggle_ai_action.setEnabled(self.ai_enabled_globally)
+
 
     def toggle_ai_features(self):
+        """Toggles AI features on/off based on user action."""
+        # Only allow toggling if AI is globally enabled (i.e., API key is present and agent initialized)
         if not self.ai_enabled_globally:
-            QMessageBox.warning(self, "AI Disabled", "AI features are globally disabled (e.g., no API key or init error) and cannot be toggled.")
+            QMessageBox.warning(self, "AI Disabled", "AI features are globally disabled (e.g., no API key or initialization error) and cannot be toggled on by the user.")
             self.toggle_ai_action.setChecked(False) # Ensure checkbox stays unchecked
             return
 
         self.ai_enabled = self.toggle_ai_action.isChecked()
-        self.settings.setValue("ai_enabled", self.ai_enabled)
-        self.update_ai_status_label()
+        self.save_settings() # Save the new AI enabled state
+        self.update_ai_status_label() # Update the status label and button states
+
         if self.ai_enabled:
-            self.output_text_edit.append("\nAI features enabled.")
+            self.output_text_edit.append("\nAI features enabled by user.")
             QMessageBox.information(self, "AI Enabled", "AI features are now enabled.")
         else:
-            self.output_text_edit.append("\nAI features disabled.")
+            self.output_text_edit.append("\nAI features disabled by user.")
             QMessageBox.information(self, "AI Disabled", "AI features are now disabled.")
         
-        self.ask_ai_general_help_button.setEnabled(self.ai_enabled)
-        self.check_answer_button.setEnabled(self.ai_enabled) # Assuming check_answer uses AI
+        # Button states are now managed by update_ai_status_label
 
     def show_ai_model_settings_dialog(self):
         """Opens a dialog to configure AI model settings."""
-        #from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QIntValidator # Local import for dialog widgets
-
         dialog = QDialog(self)
         dialog.setWindowTitle("AI Model Settings")
         layout = QVBoxLayout(dialog)
@@ -1097,7 +907,8 @@ class PythonLearningTool(QMainWindow):
         # Model Selection
         model_label = QLabel("AI Model:")
         model_combo = QComboBox()
-        model_combo.addItems(['gemini-pro', 'gemini-1.5-flash-latest', 'gemini-1.5-pro-latest']) # Add other models if available
+        # Add available Gemini models. 'gemini-pro' is older, 'gemini-1.5-flash-latest' is recommended for speed, 'gemini-1.5-pro-latest' for capability
+        model_combo.addItems(['gemini-1.5-flash-latest', 'gemini-1.5-pro-latest', 'gemini-pro'])
         model_combo.setCurrentText(self.ai_model_name)
 
         model_layout = QHBoxLayout()
@@ -1108,12 +919,23 @@ class PythonLearningTool(QMainWindow):
         # Max Tokens
         tokens_label = QLabel("Max Output Tokens:")
         tokens_input = QLineEdit(str(self.max_ai_tokens))
-        tokens_input.setValidator(QIntValidator(1, 4000)) # Adjust max as per Gemini limits
+        tokens_input.setValidator(QIntValidator(1, 8192)) # Gemini 1.5 models support up to 8192 output tokens
 
         tokens_layout = QHBoxLayout()
         tokens_layout.addWidget(tokens_label)
         tokens_layout.addWidget(tokens_input)
         layout.addLayout(tokens_layout)
+
+        # API Key Input (allow user to set/update)
+        api_key_label = QLabel("Google API Key:")
+        api_key_input = QLineEdit(self.google_api_key)
+        api_key_input.setPlaceholderText("Enter your Google Gemini API Key")
+        api_key_input.setEchoMode(QLineEdit.Password) # Mask the input
+
+        api_key_layout = QHBoxLayout()
+        api_key_layout.addWidget(api_key_label)
+        api_key_layout.addWidget(api_key_input)
+        layout.addLayout(api_key_layout)
 
         # Buttons
         buttons_layout = QHBoxLayout()
@@ -1129,31 +951,42 @@ class PythonLearningTool(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             new_model = model_combo.currentText()
             new_tokens = int(tokens_input.text())
+            new_api_key = api_key_input.text().strip()
 
+            settings_changed = False
             if new_model != self.ai_model_name:
                 self.ai_model_name = new_model
                 logging.info(f"AI Model updated to: {self.ai_model_name}")
-                if self.ai_agent:
-                    self.ai_agent.update_model(self.ai_model_name)
+                settings_changed = True
 
             if new_tokens != self.max_ai_tokens:
                 self.max_ai_tokens = new_tokens
                 logging.info(f"Max AI Output Tokens updated to: {self.max_ai_tokens}")
-                if self.ai_agent:
-                    self.ai_agent.update_max_tokens(self.max_ai_tokens) # Add this method to ai_agent.py
+                settings_changed = True
 
-            self.save_settings() # Save changes
-    
+            if new_api_key != self.google_api_key:
+                self.google_api_key = new_api_key
+                logging.info("Google API Key updated.")
+                settings_changed = True
+                # Re-initialize AI agent immediately if API key changed
+                self.initialize_ai_agent(self.google_api_key)
+            elif settings_changed and self.ai_agent:
+                # If model/tokens changed but not key, update agent directly
+                self.ai_agent.update_model(self.ai_model_name)
+                self.ai_agent.update_max_tokens(self.max_ai_tokens)
+
+            if settings_changed:
+                self.save_settings() # Save changes
+                self.update_ai_status_label() # Refresh AI status display
+
     def show_font_size_dialog(self):
         """Opens a dialog to select font size."""
-        #from PySide6.QtWidgets import QInputDialog # Local import for QInputDialog
-
         current_size = self.code_font_size
-        sizes = [8, 9, 10, 11, 12, 14, 16] # Common font sizes
+        sizes = [8, 9, 10, 11, 12, 14, 16, 18, 20] # Common font sizes
         item, ok = QInputDialog.getItem(self, "Select Font Size", "Font Size:",
-                                          [str(s) for s in sizes],
-                                          sizes.index(current_size) if current_size in sizes else 2,
-                                          False)
+                                         [str(s) for s in sizes],
+                                         sizes.index(current_size) if current_size in sizes else 2,
+                                         False)
         if ok and item:
             new_size = int(item)
             if new_size != current_size:
@@ -1174,60 +1007,70 @@ class PythonLearningTool(QMainWindow):
 
     def apply_dark_theme(self):
         """Applies a dark theme to the application."""
-        # This QSS provides a basic dark theme
         qss = """
         QMainWindow, QWidget {
-            background-color: #333333; /* Dark grey background */
-            color: #E0E0E0; /* Light grey text */
+            background-color: #2b2b2b; /* Dark grey background */
+            color: #f0f0f0; /* Light grey text */
         }
         QTextEdit {
-            background-color: #2B2B2B; /* Even darker for code/text areas */
-            color: #E0E0E0;
+            background-color: #3c3c3c; /* Even darker for code/text areas */
+            color: #f0f0f0;
             border: 1px solid #555555;
+            border-radius: 5px; /* Rounded corners */
+            padding: 5px;
             font-family: "Consolas", "Courier New", monospace;
         }
         QPushButton {
-            background-color: #555555;
-            color: #FFFFFF;
-            border: 1px solid #777777;
-            padding: 5px 10px;
-            border-radius: 3px;
+            background-color: #505050;
+            color: #ffffff;
+            border: 1px solid #666;
+            border-radius: 4px;
+            padding: 8px 15px;
         }
         QPushButton:hover {
-            background-color: #666666;
+            background-color: #606060;
         }
         QPushButton:pressed {
-            background-color: #444444;
+            background-color: #404040;
         }
         QSplitter::handle {
-            background-color: #555555;
+            background-color: #505050;
         }
         QListWidget {
-            background-color: #3A3A3A;
-            color: #E0E0E0;
-            border: 1px solid #555555;
+            background-color: #333;
+            color: #f0f0f0;
+            border: 1px solid #444;
+            border-radius: 5px;
+            padding: 5px;
         }
         QListWidget::item:selected {
-            background-color: #007ACC; /* Highlight color */
-            color: #FFFFFF;
+            background-color: #0078d7; /* Highlight color */
+            color: #ffffff;
         }
         QMenuBar {
-            background-color: #333333;
-            color: #E0E0E0;
+            background-color: #3c3c3c;
+            color: #f0f0f0;
+        }
+        QMenuBar::item {
+            padding: 5px 10px;
+            background-color: #3c3c3c;
         }
         QMenuBar::item:selected {
-            background-color: #007ACC;
+            background-color: #555;
         }
         QMenu {
-            background-color: #333333;
-            color: #E0E0E0;
-            border: 1px solid #555555;
+            background-color: #3c3c3c;
+            color: #f0f0f0;
+            border: 1px solid #555;
+        }
+        QMenu::item {
+            padding: 5px 20px;
         }
         QMenu::item:selected {
-            background-color: #007ACC;
+            background-color: #555;
         }
         QLabel {
-            color: #E0E0E0;
+            color: #f0f0f0;
         }
         QComboBox {
             background-color: #555555;
@@ -1237,9 +1080,21 @@ class PythonLearningTool(QMainWindow):
             border-radius: 3px;
         }
         QLineEdit {
-            background-color: #2B2B2B;
-            color: #E0E0E0;
+            background-color: #3c3c3c;
+            color: #f0f0f0;
             border: 1px solid #555555;
+            border-radius: 3px;
+            padding: 2px;
+        }
+        QStatusBar {
+            background-color: #3c3c3c;
+            color: #f0f0f0;
+            border-top: 1px solid #555;
+        }
+        /* Specific object names for fonts - ensure they match init_ui object names */
+        #lessonContent, #codeEditor, #outputText, #aiQuestionInput {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 10pt; /* This will be overridden by apply_font_size if different */
         }
         """
         self.setStyleSheet(qss)
@@ -1247,7 +1102,6 @@ class PythonLearningTool(QMainWindow):
 
     def apply_light_theme(self):
         """Applies a light theme to the application."""
-        # This QSS provides a basic light theme
         qss = """
         QMainWindow, QWidget {
             background-color: #F0F0F0; /* Light grey background */
@@ -1257,14 +1111,16 @@ class PythonLearningTool(QMainWindow):
             background-color: #FFFFFF; /* White for code/text areas */
             color: #000000;
             border: 1px solid #CCCCCC;
+            border-radius: 5px; /* Rounded corners */
+            padding: 5px;
             font-family: "Consolas", "Courier New", monospace;
         }
         QPushButton {
             background-color: #E0E0E0;
             color: #333333;
             border: 1px solid #B0B0B0;
-            padding: 5px 10px;
-            border-radius: 3px;
+            border-radius: 4px;
+            padding: 8px 15px;
         }
         QPushButton:hover {
             background-color: #D0D0D0;
@@ -1279,6 +1135,8 @@ class PythonLearningTool(QMainWindow):
             background-color: #F5F5F5;
             color: #333333;
             border: 1px solid #CCCCCC;
+            border-radius: 5px;
+            padding: 5px;
         }
         QListWidget::item:selected {
             background-color: #ADD8E6; /* Light blue highlight */
@@ -1288,6 +1146,10 @@ class PythonLearningTool(QMainWindow):
             background-color: #E0E0E0;
             color: #333333;
         }
+        QMenuBar::item {
+            padding: 5px 10px;
+            background-color: #E0E0E0;
+        }
         QMenuBar::item:selected {
             background-color: #ADD8E6;
         }
@@ -1295,6 +1157,9 @@ class PythonLearningTool(QMainWindow):
             background-color: #E0E0E0;
             color: #333333;
             border: 1px solid #CCCCCC;
+        }
+        QMenu::item {
+            padding: 5px 20px;
         }
         QMenu::item:selected {
             background-color: #ADD8E6;
@@ -1313,6 +1178,18 @@ class PythonLearningTool(QMainWindow):
             background-color: #FFFFFF;
             color: #000000;
             border: 1px solid #CCCCCC;
+            border-radius: 3px;
+            padding: 2px;
+        }
+        QStatusBar {
+            background-color: #E0E0E0;
+            color: #333333;
+            border-top: 1px solid #B0B0B0;
+        }
+        /* Specific object names for fonts - ensure they match init_ui object names */
+        #lessonContent, #codeEditor, #outputText, #aiQuestionInput {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 10pt; /* This will be overridden by apply_font_size if different */
         }
         """
         self.setStyleSheet(qss)
@@ -1322,13 +1199,12 @@ class PythonLearningTool(QMainWindow):
         """Applies the given font size to the code editor and output text areas."""
         font = QFont()
         font.setPointSize(size)
-        # Apply to code editor
+        
         self.code_editor.setFont(font)
-        # Apply to output area
         self.output_text_edit.setFont(font)
-        # You might also want to apply it to other text-heavy widgets like lesson_text_edit
         self.lesson_content_text_edit.setFont(font)
-        # Store the current font size in an attribute
+        self.ai_question_input.setFont(font) # Apply to AI question input as well
+
         self.code_font_size = size
         logging.info(f"Font size applied: {size}")
 
@@ -1344,84 +1220,9 @@ class PythonLearningTool(QMainWindow):
             <p>Developed by: [Your Name/Alias Here]</p>
             <p>CodeCompanion V2 is designed to help users learn Python interactively. It features an integrated code editor, lesson display, and AI assistance powered by Google Gemini to provide a rich learning experience.</p>
             <p>For more information, visit the <a href="https://github.com/Snake-eyes82/CodeCompanion-V2">GitHub Repository</a>.</p>
-            <p>Built with PyQt5 and Google Gemini API.</p>
+            <p>Built with PySide6 and Google Gemini API.</p>
             """
         )
-
-    def apply_window_box_styles(self):
-        """Applies a dark theme and rounded corners to the main window's boxes."""
-        style_sheet = """
-        QMainWindow {
-            background-color: #2b2b2b;
-            color: #f0f0f0;
-        }
-        QTextEdit, QListWidget {
-            background-color: #3c3c3c;
-            color: #f0f0f0;
-            border: 1px solid #555;
-            border-radius: 5px;
-            padding: 5px;
-        }
-        QPushButton {
-            background-color: #505050;
-            color: #ffffff;
-            border: 1px solid #666;
-            border-radius: 4px;
-            padding: 8px 15px;
-        }
-        QPushButton:hover {
-            background-color: #606060;
-        }
-        QPushButton:pressed {
-            background-color: #404040;
-        }
-        QLabel {
-            color: #f0f0f0;
-        }
-        QSplitter::handle {
-            background-color: #505050;
-        }
-        QMenuBar {
-            background-color: #3c3c3c;
-            color: #f0f0f0;
-        }
-        QMenuBar::item {
-            padding: 5px 10px;
-            background-color: #3c3c3c;
-        }
-        QMenuBar::item:selected {
-            background-color: #555;
-        }
-        QMenu {
-            background-color: #3c3c3c;
-            border: 1px solid #555;
-            color: #f0f0f0;
-        }
-        QMenu::item {
-            padding: 5px 20px;
-        }
-        QMenu::item:selected {
-            background-color: #555;
-        }
-        QStatusBar {
-            background-color: #3c3c3c;
-            color: #f0f0f0;
-            border-top: 1px solid #555;
-        }
-        #lessonList { /* Object name for specific styling */
-            background-color: #333;
-            border: 1px solid #444;
-        }
-        #lessonList::item:selected {
-            background-color: #0078d7; /* Highlight color for selected item */
-            color: #ffffff;
-        }
-        #lessonContent, #codeEditor, #outputText, #aiQuestionInput {
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 10pt;
-        }
-        """
-        self.setStyleSheet(style_sheet)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
