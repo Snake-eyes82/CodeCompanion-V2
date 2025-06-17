@@ -1,0 +1,40 @@
+[
+  {
+    "title": "Lesson 1: Introduction to Python",
+    "exercises": [
+      {
+        "title": "Hello World",
+        "prompt": "Write a Python program that prints 'Hello, World!' to the console.",
+        "initial_code": "print(...)",
+        "expected_output": "Hello, World!",
+        "check_function": "import json\n\ndef check_solution(user_code, user_output, expected_output):\n    is_correct = user_output.strip() == expected_output.strip() and 'print' in user_code\n    if is_correct:\n        return json.dumps({\"is_correct\": True, \"feedback\": \"Output matches and 'print' function is used.\"}) \n    else:\n        feedback_msg = \"Output does not match expected. Make sure you print 'Hello, World!' exactly.\"\n        if 'print' not in user_code:\n            feedback_msg += \"\\nEnsure you are using the 'print' function.\"\n        return json.dumps({\"is_correct\": False, \"feedback\": feedback_msg.strip()})"
+      },
+      {
+        "title": "Print a Specific Name",
+        "prompt": "Write a program that prints the name 'Alice' to the console. Make sure the output is exactly 'Alice'.",
+        "initial_code": "name = ...\nprint(name)",
+        "expected_output": "Alice",
+        "check_function": "import json\n\ndef check_solution(user_code, user_output, expected_output):\n    is_correct = user_output.strip() == expected_output.strip() and 'print' in user_code\n    if is_correct:\n        return json.dumps({\"is_correct\": True, \"feedback\": \"Great job! The output matches the expected name.\"}) \n    else:\n        feedback_msg = \"The output does not match 'Alice'. Check your spelling, capitalization, and make sure you are only printing the name.\"\n        if 'print' not in user_code:\n            feedback_msg += \"\\nRemember to use the 'print()' function.\"\n        return json.dumps({\"is_correct\": False, \"feedback\": feedback_msg.strip()})"
+      }
+    ]
+  },
+  {
+    "title": "Lesson 2: Variables and Data Types",
+    "exercises": [
+      {
+        "title": "Declare a Variable",
+        "prompt": "Declare a variable named 'age' and assign it the value 30. Then, print the value of 'age'.",
+        "initial_code": "age = ...\nprint(age)",
+        "expected_output": "30",
+        "check_function": "import json\n\ndef check_solution(user_code, user_output, expected_output):\n    is_correct = user_output.strip() == expected_output and 'age = 30' in user_code and 'print(age)' in user_code\n    if is_correct:\n        return json.dumps({\"is_correct\": True, \"feedback\": \"Correct! You declared and printed the variable successfully.\"}) \n    else:\n        feedback_msg = \"Incorrect. Check your variable declaration and print statement.\"\n        return json.dumps({\"is_correct\": False, \"feedback\": feedback_msg})"
+      },
+      {
+        "title": "String Concatenation",
+        "prompt": "Create two string variables, 'firstName' and 'lastName', assign them values 'John' and 'Doe' respectively. Concatenate them with a space in between and print the result.",
+        "initial_code": "firstName = ...\nlastName = ...\nfullName = ...\nprint(fullName)",
+        "expected_output": "John Doe",
+        "check_function": "import json\n\ndef check_solution(user_code, user_output, expected_output):\n    is_correct = user_output.strip() == expected_output and \"firstName = 'John'\" in user_code and \"lastName = 'Doe'\" in user_code and \"print(firstName + ' ' + lastName)\" in user_code\n    if is_correct:\n        return json.dumps({\"is_correct\": True, \"feedback\": \"Excellent! You successfully concatenated the strings.\"}) \n    else:\n        feedback_msg = \"Incorrect.  Review string concatenation and variable assignment.\"\n        return json.dumps({\"is_correct\": False, \"feedback\": feedback_msg})"
+      }
+    ]
+  }
+]

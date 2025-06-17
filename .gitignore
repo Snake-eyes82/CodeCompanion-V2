@@ -1,0 +1,20 @@
+# Python virtual environment
+venv/
+
+# Specific AI agent file (if it exists as a separate file)
+#Self-Improving Agent.py
+
+# Common Python build/cache files
+__pycache__/
+*.pyc
+*.egg-info/
+.Python
+build/
+dist/
+
+# OS generated files
+.DS_Store
+.env
+.idea/
+*.log
+*.bin
